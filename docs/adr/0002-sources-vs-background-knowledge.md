@@ -1,0 +1,3 @@
+# Sources teach; Background Knowledge only reads
+
+The assistant must teach only from Course material, yet it cannot understand a pasted `TypeError` without general programming knowledge. We split the two roles. Background Knowledge may be used to read a student's code and error messages. Every claim that teaches a concept must rest on a Source, meaning Unlocked Course material that is cited and linked. When no Source covers something, the assistant says so (or says it is Upcoming) and the gap is logged as an Unanswered Question. We rejected a literal "material only" rule because debugging help would be impossible, and "material first, general knowledge as fallback" because it would quietly replace the material.
