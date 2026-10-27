@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 // Optimistic gate: every route needs a session cookie unless it is listed here
 // (the cookie may be split into .0, .1 … chunks).
 // The real check (valid session, still on the Roster) is requireViewer() in each page.
-const PUBLIC_PATHS = ["/login", "/no-access", "/api/auth", "/status"];
+const PUBLIC_PATHS = ["/login", "/no-access", "/integritet", "/api/auth", "/status"];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;

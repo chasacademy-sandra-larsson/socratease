@@ -15,6 +15,9 @@ export default function LoginPage() {
           Logga in med Google
         </button>
       </form>
+      <a href="/integritet" className="text-sm text-zinc-500 underline">
+        Så hanteras dina uppgifter
+      </a>
     </main>
   );
 }
