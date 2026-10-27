@@ -13,7 +13,8 @@ if (process.env.VERCEL_ENV === "preview" && process.env.ALLOW_PREVIEW_MIGRATIONS
   process.exit(0);
 }
 
-const pool = createPool();
+// Migrations use the direct (unpooled) connection when one exists; the app uses the pooler.
+const pool = createPool(process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL);
 try {
   await migrate(drizzle(pool), { migrationsFolder: "./drizzle" });
   console.log("Migrations applied");
