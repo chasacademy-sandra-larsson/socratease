@@ -1,0 +1,20 @@
+# Local development only. Production uses a managed Postgres in the EU (ADR 0004).
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: socratease
+      POSTGRES_PASSWORD: socratease
+      POSTGRES_DB: socratease
+    ports:
+      - "54329:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U socratease"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  db-data:
