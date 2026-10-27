@@ -15,7 +15,7 @@ pnpm install
 cp .env.example .env.local   # local database URL
 pnpm db:up                   # start Postgres with pgvector (Docker Compose)
 pnpm db:migrate              # apply migrations
-pnpm dev                     # http://localhost:3000
+pnpm dev                     # http://localhost:3100
 ```
 
 The start page shows whether the database is reachable, how many migrations are applied and the pgvector version.

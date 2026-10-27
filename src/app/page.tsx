@@ -1,29 +1,15 @@
-import { connection } from "next/server";
 import { Suspense } from "react";
-import { pool } from "@/db/client";
-import { getDatabaseStatus } from "@/db/status";
+import { requireViewer } from "@/access/viewer";
+import { signOut } from "@/auth";
 
-async function DatabaseStatus() {
-  await connection();
-  const status = await getDatabaseStatus(pool);
-
-  if (!status.reachable) {
-    // Details stay in the server log; they can reveal host names and users.
-    console.error("Database status check failed:", status.error);
-    return (
-      <p className="text-red-700 dark:text-red-400">Databasen går inte att nå.</p>
-    );
-  }
-
+async function Welcome() {
+  const viewer = await requireViewer();
   return (
-    <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2">
-      <dt className="text-zinc-500">Databas</dt>
-      <dd>Ansluten</dd>
-      <dt className="text-zinc-500">Migreringar</dt>
-      <dd>{status.migrationsApplied}</dd>
-      <dt className="text-zinc-500">pgvector</dt>
-      <dd>{status.pgvectorVersion ?? "saknas"}</dd>
-    </dl>
+    <p>
+      {viewer.role === "teacher"
+        ? "Du är inloggad som lärare."
+        : `Du är inloggad som student i ${viewer.cohortName}.`}
+    </p>
   );
 }
 
@@ -31,9 +17,17 @@ export default function Home() {
   return (
     <main className="mx-auto flex w-full max-w-xl flex-col gap-6 px-4 py-24">
       <h1 className="text-3xl font-semibold tracking-tight">SocratEase</h1>
-      <Suspense fallback={<p className="text-zinc-500">Kontrollerar databasen…</p>}>
-        <DatabaseStatus />
+      <Suspense fallback={<p className="text-zinc-500">Laddar…</p>}>
+        <Welcome />
       </Suspense>
+      <form
+        action={async () => {
+          "use server";
+          await signOut({ redirectTo: "/login" });
+        }}
+      >
+        <button className="text-sm text-zinc-500 underline">Logga ut</button>
+      </form>
     </main>
   );
 }
