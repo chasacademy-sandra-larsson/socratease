@@ -22,3 +22,7 @@ Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents
 - **Checks before merge**: CI (typecheck, lint, tests) must pass. Each PR gets a Vercel preview deployment. PRs that touch answering behaviour must also pass the Evaluation Set; any leaked Assignment solution blocks the merge.
 - **Parallel work**: when several tickets are unblocked at once, each agent works in its own git worktree.
 - **No `dev` branch.** `main` is the integration branch, and Vercel previews serve as staging. Revisit once real Students use the tool (e.g. release tags for production).
+
+## Next.js
+
+This is Next.js 16 with Cache Components enabled. Before writing Next.js code, read the relevant guide in `node_modules/next/dist/docs/` (see `AGENTS.md`, which `next dev` keeps up to date). Request-time data such as database reads goes in a component that calls `connection()`, wrapped in `<Suspense>`.
