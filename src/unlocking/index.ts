@@ -12,9 +12,25 @@ export type UnlockInputs = {
 
 export type UnlockStatus = { status: "unlocked" | "upcoming"; unlocksOn: IsoDate };
 
-/** The date material becomes Unlocked: a Session on its date, everything else when its Course starts. */
+/**
+ * The date material becomes Unlocked: a Session on its date, everything else when its Course
+ * starts. A Session without a date can't be placed in the schedule, so it is refused rather
+ * than unlocked early; sync must skip it until the date is filled in.
+ */
 export function unlocksOn(material: UnlockInputs): IsoDate {
-  return material.kind === "session" && material.sessionDate ? material.sessionDate : material.courseStartsOn;
+  if (material.kind !== "session") return material.courseStartsOn;
+  if (!material.sessionDate) throw new Error("A Session with no date can't be unlocked");
+  return material.sessionDate;
+}
+
+/** Whether material with this unlock date is Unlocked on `today` (already the Cohort's "today"). */
+export function isUnlocked(unlocksOn: IsoDate, today: IsoDate): boolean {
+  return unlocksOn <= today;
+}
+
+/** A date as Swedish text, e.g. "8 december". */
+export function formatSwedishDate(date: IsoDate): string {
+  return new Intl.DateTimeFormat("sv-SE", { day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(date));
 }
 
 /** The date unlocking uses for a Cohort: its fixed "today" if it has one (the Demo Cohort, ADR 0001). */
@@ -34,5 +50,5 @@ export function unlockStatus(
   today: IsoDate,
 ): UnlockStatus {
   const date = unlocksOn(material);
-  return { status: date <= cohortToday(cohort, today) ? "unlocked" : "upcoming", unlocksOn: date };
+  return { status: isUnlocked(date, cohortToday(cohort, today)) ? "unlocked" : "upcoming", unlocksOn: date };
 }

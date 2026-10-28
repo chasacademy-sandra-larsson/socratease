@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { unlockStatus } from "../src/unlocking";
+import { unlockStatus, unlocksOn } from "../src/unlocking";
 
 const course = { courseStartsOn: "2026-09-01" };
 const realCohort = { fixedToday: null };
@@ -24,5 +24,9 @@ describe("unlockStatus", () => {
     const demoCohort = { fixedToday: "2026-10-01" };
 
     expect(unlockStatus(session, demoCohort, "2027-01-01").status).toBe("upcoming");
+  });
+
+  it("refuses a Session without a date, instead of unlocking it with its Course", () => {
+    expect(() => unlocksOn({ ...course, kind: "session" })).toThrow(/no date/);
   });
 });

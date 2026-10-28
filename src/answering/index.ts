@@ -4,7 +4,7 @@ import { streamText, type ModelMessage } from "ai";
 import { embeddingModelId, embedTexts } from "@/ai/embed";
 import type { AiModels } from "@/ai/models";
 import { chunks, cohorts, sources } from "@/db/schema";
-import { cohortToday, type IsoDate } from "@/unlocking";
+import { cohortToday, formatSwedishDate, isUnlocked, type IsoDate } from "@/unlocking";
 
 export type AnswerKind = "direct" | "upcoming";
 
@@ -37,9 +37,13 @@ export async function answer(
   { db, models }: { db: NodePgDatabase; models: AiModels },
   input: AnswerInput,
 ) {
-  const [queryEmbedding] = await embedTexts(models, [input.question], "query");
-  const [cohort] = await db.select({ fixedToday: cohorts.fixedToday }).from(cohorts).where(eq(cohorts.id, input.cohortId));
-  const today = cohortToday(cohort ?? { fixedToday: null }, input.today);
+  const [[queryEmbedding], [cohort]] = await Promise.all([
+    embedTexts(models, [input.question], "query"),
+    db.select({ fixedToday: cohorts.fixedToday }).from(cohorts).where(eq(cohorts.id, input.cohortId)),
+  ]);
+  // A missing Cohort must not fall back to the real date: that would unlock a Demo Cohort's material.
+  if (!cohort) throw new Error(`Cohort ${input.cohortId} not found`);
+  const today = cohortToday(cohort, input.today);
 
   const nearestChunks = (onlyUnlocked: boolean) =>
     db.transaction(async (tx) => {
@@ -61,6 +65,7 @@ export async function answer(
           and(
             eq(sources.cohortId, input.cohortId),
             eq(chunks.embeddingModel, embeddingModelId(models)),
+            // Same rule as isUnlocked, in SQL.
             onlyUnlocked ? lte(sources.unlocksOn, today) : undefined,
           ),
         )
@@ -71,17 +76,17 @@ export async function answer(
   // If the closest material of all is Upcoming, the question is about something that hasn't
   // been reached yet: say when it comes. Its content never reaches the model.
   const nearest = await nearestChunks(false);
-  if (nearest[0] && nearest[0].unlocksOn > today) {
+  if (nearest[0] && !isUnlocked(nearest[0].unlocksOn, today)) {
     // Only Upcoming material closer to the question than anything Unlocked.
     const upcoming = new Map<string, UpcomingSource>();
     for (const { sourceId, title, kind, unlocksOn } of nearest) {
-      if (unlocksOn <= today) break;
+      if (isUnlocked(unlocksOn, today)) break;
       if (!upcoming.has(sourceId)) upcoming.set(sourceId, { title, kind, unlocksOn });
     }
     return upcomingAnswer(models, input, [...upcoming.values()]);
   }
 
-  const retrieved = nearest.every((chunk) => chunk.unlocksOn <= today) ? nearest : await nearestChunks(true);
+  const retrieved = nearest.every((chunk) => isUnlocked(chunk.unlocksOn, today)) ? nearest : await nearestChunks(true);
 
   // Group Chunks by Source, numbered in order of first appearance.
   const bySource = new Map<string, AnsweredSource & { excerpts: string[] }>();
@@ -120,9 +125,7 @@ function upcomingAnswer(models: AiModels, input: AnswerInput, upcoming: Upcoming
 }
 
 function whenItComes(kind: UpcomingSource["kind"], unlocksOn: IsoDate): string {
-  const date = new Intl.DateTimeFormat("sv-SE", { day: "numeric", month: "long", timeZone: "UTC" }).format(
-    new Date(unlocksOn),
-  );
+  const date = formatSwedishDate(unlocksOn);
   return kind === "session" ? `tas upp i passet den ${date}` : `kommer när kursen startar den ${date}`;
 }
 

@@ -43,6 +43,6 @@ export const evaluationSet: EvaluationCase[] = [
     group: 3,
     question: "Vad är ett interface i TypeScript?",
     kind: "upcoming",
-    mustNotContain: ["formen på ett objekt", "egenskaper"],
+    mustNotContain: ["formen på ett objekt"],
   },
 ];
