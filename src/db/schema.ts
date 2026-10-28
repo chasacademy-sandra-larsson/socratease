@@ -47,7 +47,8 @@ export const sources = pgTable(
     title: text("title").notNull(),
     url: text("url").notNull(),
   },
-  (t) => [unique().on(t.cohortId, t.externalId), index("sources_cohort_idx").on(t.cohortId)],
+  // The unique index leads with cohort_id, so it also serves lookups by Cohort.
+  (t) => [unique().on(t.cohortId, t.externalId)],
 );
 
 // A Chunk is an internal excerpt of exactly one Source, used for retrieval. Never shown to Students.

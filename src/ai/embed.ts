@@ -9,6 +9,8 @@ export async function embedTexts(
 ): Promise<number[][]> {
   if (texts.length === 0) return [];
   const { embeddings } = await embedMany({
+    // Vertex embeds one text per request; keep the burst under the per-minute quota.
+    maxParallelCalls: 4,
     model: models.embedding,
     values: texts,
     providerOptions: models.embeddingOptions?.(purpose),

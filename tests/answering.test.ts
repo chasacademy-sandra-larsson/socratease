@@ -38,7 +38,7 @@ describe("answer", () => {
       title: "Variabler: let och const",
       url: expect.stringMatching(/^https:\/\//),
     });
-    expect(await result.text).toContain("[1] Variabler: let och const");
+    expect(await result.result.text).toContain("[1] Variabler: let och const");
   });
 
   it("never uses material from another Cohort", async () => {

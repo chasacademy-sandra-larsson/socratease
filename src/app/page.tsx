@@ -1,10 +1,9 @@
 import { asc } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/node-postgres";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { requireViewer } from "@/access/viewer";
 import { signOut } from "@/auth";
-import { pool } from "@/db/client";
+import { db } from "@/db/client";
 import { cohorts } from "@/db/schema";
 import { Chat } from "./chat/chat";
 
@@ -20,10 +19,13 @@ async function ChatForViewer() {
     );
   }
   // The Teacher has no Cohort of their own; until #20 they pick one to try the chat in.
-  const allCohorts = await drizzle(pool)
+  const allCohorts = await db
     .select({ id: cohorts.id, name: cohorts.name })
     .from(cohorts)
     .orderBy(asc(cohorts.name));
+  if (allCohorts.length === 0) {
+    return <p className="text-zinc-500">Det finns ingen klass med kursmaterial än.</p>;
+  }
   return <Chat cohorts={allCohorts} />;
 }
 

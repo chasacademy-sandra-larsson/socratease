@@ -46,7 +46,8 @@ function splitLong(paragraph: string, maxChars: number): string[] {
   if (paragraph.length <= maxChars) return [paragraph];
   const pieces: string[] = [];
   let current = "";
-  for (const sentence of paragraph.match(/[^.!?\n]+[.!?]*\s*|\n/g) ?? [paragraph]) {
+  // Split after sentence ends and line breaks without dropping any characters.
+  for (const sentence of paragraph.split(/(?<=[.!?]\s+|\n)/)) {
     if (current && current.length + sentence.length > maxChars) {
       pieces.push(current.trim());
       current = "";

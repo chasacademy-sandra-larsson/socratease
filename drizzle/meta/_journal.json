@@ -29,6 +29,13 @@
       "when": 1793187940430,
       "tag": "0003_chunk-embedding-model-and-indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793207388404,
+      "tag": "0004_drop-redundant-sources-cohort-index",
+      "breakpoints": true
     }
   ]
 }

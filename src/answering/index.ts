@@ -73,7 +73,6 @@ export async function answer(
   return {
     kind: "direct" as AnswerKind,
     sources: grouped.map(({ number, title, url, kind }) => ({ number, title, url, kind })),
-    text: result.text,
     result,
   };
 }
