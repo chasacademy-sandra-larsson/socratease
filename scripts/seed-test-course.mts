@@ -2,7 +2,7 @@
 // Indexes the fictional test Course into a Cohort, using the AI provider in AI_PROVIDER.
 import { config } from "dotenv";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { testCourse } from "../fixtures/test-course";
+import { TEST_COURSE_TODAY, testCourse } from "../fixtures/test-course";
 import { getModels } from "../src/ai/models";
 import { createPool } from "../src/db/pool";
 import { cohorts } from "../src/db/schema";
@@ -22,11 +22,12 @@ try {
   const models = await getModels();
   const [cohort] = await db
     .insert(cohorts)
-    .values({ name: cohortName })
-    .onConflictDoUpdate({ target: cohorts.name, set: { name: cohortName } })
+    // The test Course's dates are fixed, so the Cohort sees them from a fixed "today" (ADR 0001).
+    .values({ name: cohortName, fixedToday: TEST_COURSE_TODAY })
+    .onConflictDoUpdate({ target: cohorts.name, set: { fixedToday: TEST_COURSE_TODAY } })
     .returning({ id: cohorts.id });
   for (const source of testCourse) await indexSource(db, models, cohort.id, source);
-  console.log(`Indexed ${testCourse.length} test Sources into ${cohortName}`);
+  console.log(`Indexed ${testCourse.length} test Sources into ${cohortName}, seen from ${TEST_COURSE_TODAY}`);
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;

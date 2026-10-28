@@ -5,13 +5,14 @@ import { config } from "dotenv";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { sql } from "drizzle-orm";
 import { evaluationSet } from "../evaluation/cases";
-import { testCourse } from "../fixtures/test-course";
+import { TEST_COURSE_TODAY, testCourse } from "../fixtures/test-course";
 import { getModels } from "../src/ai/models";
 import { prepareDerivedDatabase } from "../src/db/derived-database";
 import { createPool } from "../src/db/pool";
 import { cohorts } from "../src/db/schema";
 import { GATE_GROUP, runEvaluation } from "../src/evaluation/index";
 import { indexSource } from "../src/material/index";
+import { swedishToday } from "../src/unlocking/index";
 
 config({ path: ".env.local" });
 
@@ -34,10 +35,10 @@ try {
 
   // Start from a fresh test Course every run, so the result never depends on an earlier one.
   await db.execute(sql`truncate cohorts cascade`);
-  const [cohort] = await db.insert(cohorts).values({ name: "EVAL-TESTKURS" }).returning({ id: cohorts.id });
+  const [cohort] = await db.insert(cohorts).values({ name: "EVAL-TESTKURS", fixedToday: TEST_COURSE_TODAY }).returning({ id: cohorts.id });
   for (const source of testCourse) await indexSource(db, models, cohort.id, source);
 
-  const report = await runEvaluation({ db, models }, cohort.id, evaluationSet);
+  const report = await runEvaluation({ db, models }, { cohortId: cohort.id, today: swedishToday() }, evaluationSet);
 
   for (const { case: c, answer, failures } of report.results) {
     if (failures.length === 0) continue;

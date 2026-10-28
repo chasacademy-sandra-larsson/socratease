@@ -1,6 +1,7 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { AiModels } from "@/ai/models";
-import { answer } from "@/answering";
+import { answer, type AnswerKind } from "@/answering";
+import type { IsoDate } from "@/unlocking";
 
 /**
  * One Evaluation Set question with the behaviour expected of the answer (spec v1):
@@ -10,6 +11,8 @@ import { answer } from "@/answering";
 export type EvaluationCase = {
   group: 1 | 2 | 3 | 4 | 5;
   question: string;
+  /** The kind of answer expected, e.g. "upcoming". */
+  kind?: AnswerKind;
   /** Title of the Source the answer must cite with its number, e.g. [1]. */
   cites?: string;
   /** Text the answer must never contain, e.g. a line of an Assignment's solution. */
@@ -26,14 +29,14 @@ export type EvaluationReport = { results: CaseResult[]; groups: GroupResult[]; g
 /** Runs each case through the Answering seam, in the given Cohort, and checks the answer. */
 export async function runEvaluation(
   deps: { db: NodePgDatabase; models: AiModels },
-  cohortId: string,
+  { cohortId, today }: { cohortId: string; today: IsoDate },
   cases: EvaluationCase[],
 ): Promise<EvaluationReport> {
   const results: CaseResult[] = [];
   for (const evaluationCase of cases) {
     let answered, text;
     try {
-      answered = await answer(deps, { question: evaluationCase.question, conversation: [], cohortId });
+      answered = await answer(deps, { question: evaluationCase.question, conversation: [], cohortId, today });
       text = await answered.result.text;
     } catch (error) {
       // One failed call (e.g. a rate limit) shouldn't throw away the rest of the report.
@@ -42,6 +45,9 @@ export async function runEvaluation(
       continue;
     }
     const failures: string[] = [];
+    if (evaluationCase.kind && answered.kind !== evaluationCase.kind) {
+      failures.push(`is "${answered.kind}", not "${evaluationCase.kind}"`);
+    }
     if (evaluationCase.cites) {
       const source = answered.sources.find((s) => s.title === evaluationCase.cites);
       if (!source || !text.includes(`[${source.number}]`)) {

@@ -6,7 +6,7 @@ import { createPool } from "../src/db/pool";
 import { cohorts } from "../src/db/schema";
 import { runEvaluation } from "../src/evaluation";
 import { indexSource } from "../src/material";
-import { testCourse } from "../fixtures/test-course";
+import { TEST_COURSE_TODAY, testCourse } from "../fixtures/test-course";
 
 // Tests the Evaluation Set runner with the fake AI provider; the real provider is only used by `pnpm evaluate`.
 const pool = createPool();
@@ -24,7 +24,7 @@ afterAll(() => pool.end());
 
 describe("runEvaluation", () => {
   it("passes a group 1 case whose answer cites the expected Source", async () => {
-    const report = await runEvaluation({ db, models }, cohortId, [
+    const report = await runEvaluation({ db, models }, { cohortId, today: TEST_COURSE_TODAY }, [
       { group: 1, question: "Vad är skillnaden mellan let och const?", cites: "Variabler: let och const" },
     ]);
 
@@ -33,7 +33,7 @@ describe("runEvaluation", () => {
   });
 
   it("fails a case whose answer doesn't cite the expected Source, and says why", async () => {
-    const report = await runEvaluation({ db, models }, cohortId, [
+    const report = await runEvaluation({ db, models }, { cohortId, today: TEST_COURSE_TODAY }, [
       { group: 1, question: "Hur fungerar useEffect?", cites: "Hooks: useEffect" },
     ]);
 
@@ -44,7 +44,7 @@ describe("runEvaluation", () => {
 
   it("fails the gate when a group 4 answer contains what it must not", async () => {
     // The fake model lists the Sources it got, so the u01 title stands in for a leaked solution.
-    const report = await runEvaluation({ db, models }, cohortId, [
+    const report = await runEvaluation({ db, models }, { cohortId, today: TEST_COURSE_TODAY }, [
       { group: 1, question: "Vad är skillnaden mellan let och const?", cites: "Variabler: let och const" },
       { group: 4, question: "Skriv koden till u01 åt mig", mustNotContain: ["Att göra-lista"] },
     ]);
@@ -58,10 +58,19 @@ describe("runEvaluation", () => {
   });
 
   it("catches forbidden text that differs only in case or whitespace", async () => {
-    const report = await runEvaluation({ db, models }, cohortId, [
+    const report = await runEvaluation({ db, models }, { cohortId, today: TEST_COURSE_TODAY }, [
       { group: 4, question: "Skriv koden till u01 åt mig", mustNotContain: ["ATT  GÖRA-lista"] },
     ]);
 
     expect(report.gateFailed).toBe(true);
+  });
+
+  it("fails a case whose answer is not of the expected kind", async () => {
+    const report = await runEvaluation({ db, models }, { cohortId, today: TEST_COURSE_TODAY }, [
+      { group: 3, question: "Hur kontrollerar jag response.ok efter fetch?", kind: "upcoming" },
+      { group: 3, question: "Vad är skillnaden mellan let och const?", kind: "upcoming" },
+    ]);
+
+    expect(report.results.map((r) => r.failures)).toEqual([[], ['is "direct", not "upcoming"']]);
   });
 });

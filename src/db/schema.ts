@@ -17,6 +17,8 @@ export const cohorts = pgTable("cohorts", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull().unique(),
   endsOn: date("ends_on"),
+  // A fixed "today" for unlocking, used by the Demo Cohort so it always has Upcoming material (ADR 0001).
+  fixedToday: date("fixed_today"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -46,6 +48,8 @@ export const sources = pgTable(
     courseName: text("course_name").notNull(),
     title: text("title").notNull(),
     url: text("url").notNull(),
+    // When the material becomes Unlocked, derived from Notion's dates (ADR 0001).
+    unlocksOn: date("unlocks_on").notNull(),
   },
   // The unique index leads with cohort_id, so it also serves lookups by Cohort.
   (t) => [unique().on(t.cohortId, t.externalId)],

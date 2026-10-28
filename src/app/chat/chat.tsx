@@ -49,6 +49,15 @@ export function Chat({ cohorts }: Props) {
           >
             {message.parts.map((part, i) => (part.type === "text" ? <span key={i}>{part.text}</span> : null))}
           </div>
+          {message.metadata?.upcoming && message.metadata.upcoming.length > 0 && (
+            <ul className="mt-2 flex flex-col gap-1 text-sm text-zinc-500">
+              {message.metadata.upcoming.map((item) => (
+                <li key={item.title}>
+                  Kommer {formatDate(item.unlocksOn)}: {item.title}
+                </li>
+              ))}
+            </ul>
+          )}
           {message.metadata?.sources && message.metadata.sources.length > 0 && (
             <ol className="mt-2 flex flex-col gap-1 text-sm">
               {message.metadata.sources.map((source) => (
@@ -92,4 +101,8 @@ export function Chat({ cohorts }: Props) {
       </form>
     </div>
   );
+}
+
+function formatDate(isoDate: string): string {
+  return new Intl.DateTimeFormat("sv-SE", { day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(isoDate));
 }
