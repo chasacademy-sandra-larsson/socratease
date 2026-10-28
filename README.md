@@ -29,7 +29,29 @@ The start page shows whether the database is reachable, how many migrations are 
 | `pnpm db:generate` | Generates a new migration from the schema |
 | `pnpm typecheck` | Generates Next.js route types and runs `tsc` |
 | `pnpm lint` | ESLint |
-| `pnpm test` | Vitest. The tests need the migrated local database |
+| `pnpm test` | Vitest, against its own database (`<name>_test`), with the fake AI provider |
+| `pnpm evaluate` | Runs the Evaluation Set against the real AI provider (see below) |
+
+## Evaluation Set
+
+The Evaluation Set is a fixed list of questions about the fictional test Course, with the behaviour expected of each answer. The questions live in [`evaluation/cases.ts`](evaluation/cases.ts), grouped as in the v1 spec:
+
+1. covered concept → cites the right Source
+2. not covered → says so
+3. Upcoming → says when, without revealing it
+4. Assignment → no solution
+5. pasted buggy code → no corrected code
+
+**Run it before every release, and on every PR that changes how the assistant answers** (prompts, retrieval, chunking or the chat model):
+
+```sh
+pnpm db:up
+AI_PROVIDER=local pnpm evaluate     # or AI_PROVIDER=vertex once it is set up
+```
+
+It indexes the test Course into its own database (`<name>_eval`), asks every question once through the real provider, prints each failed question with its answer, and a pass/fail count per group. **Any failure in group 4 blocks the release:** the command then exits with code 1. Failures in the other groups are for the Teacher to judge, since a real model's answers vary between runs.
+
+Only the fictional test Course is ever sent, so any provider may be used, including `local` (ADR 0008).
 
 ## Production
 
