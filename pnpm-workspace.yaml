@@ -1,4 +1,7 @@
 allowBuilds:
   esbuild: true
+  # Local embeddings (ADR 0008) work with the prebuilt binaries; their install scripts aren't needed.
+  onnxruntime-node: false
+  protobufjs: false
   sharp: false
   unrs-resolver: false
