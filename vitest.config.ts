@@ -6,6 +6,11 @@ config({ path: ".env.local" });
 
 export default defineConfig({
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
-  // Integration tests share one database, so files run one at a time.
-  test: { include: ["tests/**/*.test.ts"], fileParallelism: false },
+  test: {
+    include: ["tests/**/*.test.ts"],
+    globalSetup: ["tests/setup-database.ts"],
+    setupFiles: ["tests/use-test-database.ts"],
+    // Integration tests share one test database, so files run one at a time.
+    fileParallelism: false,
+  },
 });
