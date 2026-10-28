@@ -16,8 +16,10 @@
     "seed:test-course": "tsx scripts/seed-test-course.mts"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.89",
     "@ai-sdk/google-vertex": "^5.0.123",
     "@ai-sdk/react": "^4.0.158",
+    "@huggingface/transformers": "^4.3.1",
     "ai": "^7.0.154",
     "drizzle-orm": "^0.45.4",
     "next": "16.4.3",
