@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Integritet – SocratEase" };
 
-// Plain-language privacy policy. Keep in sync with ADR 0003 (Question Log) and ADR 0006 (AI provider).
+// Plain-language privacy policy. Keep in sync with ADR 0003 (Question Log) and ADR 0006 (AI provider, incl. the abuse-logging exception).
 export default function PrivacyPage() {
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-24 leading-7">
@@ -39,8 +39,10 @@ export default function PrivacyPage() {
       <h2 className="mt-4 text-xl font-semibold">Var uppgifterna behandlas</h2>
       <p>
         Appen körs hos Vercel och databasen hos Neon, båda i Frankfurt (EU). Dina frågor skickas
-        till en AI-leverantör för att kunna besvaras. Leverantören får inte träna på uppgifterna,
-        får inte spara dem och behandlar dem inom EU där det går. Inloggningen sker via Google.
+        till Google Cloud (Vertex AI) i EU för att kunna besvaras. Google får inte träna AI-modeller
+        på dem och sparar dem inte efter svaret, med ett undantag: frågor som Googles system
+        flaggar som möjligt missbruk kan sparas i upp till 90 dagar i EU och granskas av Google.
+        Inloggningen sker via Google.
       </p>
 
       <h2 className="mt-4 text-xl font-semibold">Kontakt</h2>
