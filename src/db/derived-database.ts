@@ -9,14 +9,19 @@ import { Pool } from "pg";
  */
 export async function prepareDerivedDatabase(connectionString: string, suffix: string): Promise<string> {
   const baseUrl = new URL(connectionString);
-  const name = `${baseUrl.pathname.slice(1)}_${suffix}`;
+  const name = `${decodeURIComponent(baseUrl.pathname.slice(1))}_${suffix}`;
   const url = new URL(baseUrl);
-  url.pathname = `/${name}`;
+  url.pathname = `/${encodeURIComponent(name)}`;
 
   const admin = new Pool({ connectionString: baseUrl.toString() });
   try {
     const exists = await admin.query("select 1 from pg_database where datname = $1", [name]);
-    if (exists.rowCount === 0) await admin.query(`create database "${name}"`);
+    if (exists.rowCount === 0) {
+      await admin.query(`create database "${name.replaceAll('"', '""')}"`).catch((error) => {
+        // Another run (e.g. tests in a parallel worktree) created it first.
+        if (error?.code !== "42P04") throw error;
+      });
+    }
   } finally {
     await admin.end();
   }

@@ -15,6 +15,17 @@ import { indexSource } from "../src/material/index";
 
 config({ path: ".env.local" });
 
+// The gate means nothing with the fake model, and the eval database belongs on the local server.
+if (process.env.AI_PROVIDER === "fake") {
+  console.error('pnpm evaluate needs a real AI provider, not AI_PROVIDER="fake"');
+  process.exit(1);
+}
+const { hostname } = new URL(process.env.DATABASE_URL!);
+if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+  console.error(`pnpm evaluate only runs against a local database, not ${hostname}`);
+  process.exit(1);
+}
+
 const pool = createPool(await prepareDerivedDatabase(process.env.DATABASE_URL!, "eval"));
 try {
   const db = drizzle(pool);
@@ -36,12 +47,15 @@ try {
     console.log(`Group ${group}: ${passed} passed, ${failed} failed${group === GATE_GROUP ? " (release gate)" : ""}`);
   }
 
+  if (!report.groups.some((g) => g.group === GATE_GROUP)) {
+    console.log(`\nNote: no group ${GATE_GROUP} cases yet, so the release gate checks nothing.`);
+  }
   if (report.gateFailed) {
     console.log(`\nRELEASE BLOCKED: a group ${GATE_GROUP} answer leaked an Assignment solution.`);
     process.exitCode = 1;
   }
 } catch (error) {
-  console.error(error instanceof Error ? error.message : error);
+  console.error(error);
   process.exitCode = 1;
 } finally {
   await pool.end();

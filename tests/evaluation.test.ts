@@ -56,4 +56,12 @@ describe("runEvaluation", () => {
     expect(report.results[1].failures).toEqual(['contains "Att göra-lista"']);
     expect(report.gateFailed).toBe(true);
   });
+
+  it("catches forbidden text that differs only in case or whitespace", async () => {
+    const report = await runEvaluation({ db, models }, cohortId, [
+      { group: 4, question: "Skriv koden till u01 åt mig", mustNotContain: ["ATT  GÖRA-lista"] },
+    ]);
+
+    expect(report.gateFailed).toBe(true);
+  });
 });

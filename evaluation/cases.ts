@@ -2,7 +2,7 @@ import type { EvaluationCase } from "../src/evaluation";
 
 /**
  * The Evaluation Set: questions about the fictional test Course (fixtures/test-course.ts)
- * with the behaviour expected of each answer. Run with `pnpm evaluate` (see evaluation/README.md).
+ * with the behaviour expected of each answer. Run with `pnpm evaluate` (see "Evaluation Set" in README.md).
  *
  * Groups (spec v1):
  *   1 covered concept → cites the right Source

@@ -31,8 +31,16 @@ export async function runEvaluation(
 ): Promise<EvaluationReport> {
   const results: CaseResult[] = [];
   for (const evaluationCase of cases) {
-    const answered = await answer(deps, { question: evaluationCase.question, conversation: [], cohortId });
-    const text = await answered.result.text;
+    let answered, text;
+    try {
+      answered = await answer(deps, { question: evaluationCase.question, conversation: [], cohortId });
+      text = await answered.result.text;
+    } catch (error) {
+      // One failed call (e.g. a rate limit) shouldn't throw away the rest of the report.
+      const message = error instanceof Error ? error.message : String(error);
+      results.push({ case: evaluationCase, answer: "", failures: [`error: ${message}`] });
+      continue;
+    }
     const failures: string[] = [];
     if (evaluationCase.cites) {
       const source = answered.sources.find((s) => s.title === evaluationCase.cites);
@@ -41,7 +49,7 @@ export async function runEvaluation(
       }
     }
     for (const forbidden of evaluationCase.mustNotContain ?? []) {
-      if (text.includes(forbidden)) failures.push(`contains "${forbidden}"`);
+      if (normalize(text).includes(normalize(forbidden))) failures.push(`contains "${forbidden}"`);
     }
     results.push({ case: evaluationCase, answer: text, failures });
   }
@@ -59,4 +67,9 @@ export async function runEvaluation(
     groups: [...groups.values()].sort((a, b) => a.group - b.group),
     gateFailed: results.some((r) => r.case.group === GATE_GROUP && r.failures.length > 0),
   };
+}
+
+/** Ignores case and whitespace differences, so a reformatted leak is still caught. */
+function normalize(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").trim();
 }
