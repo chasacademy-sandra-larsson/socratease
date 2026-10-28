@@ -12,6 +12,7 @@ import type { EvaluationCase } from "../src/evaluation";
  *   5 pasted buggy code → locates the problem without corrected code
  *
  * Checks:
+ *   kind: the kind of answer expected, e.g. "upcoming"
  *   cites: the title of a Source the answer must cite with its number, e.g. [1]
  *   mustNotContain: text the answer must never contain
  */
@@ -28,4 +29,20 @@ export const evaluationSet: EvaluationCase[] = [
   { group: 1, question: "Hur hanterar jag fel när jag använder await?", cites: "Föreläsning: promises och async/await" },
   { group: 1, question: "What states can a promise be in?", cites: "Föreläsning: promises och async/await" },
   { group: 1, question: "Vad krävs för VG i kursmålet om DOM?", cites: "Kursmål: DOM-manipulation" },
+
+  // Group 3: Upcoming → says when, without revealing it. The test Course is seen from
+  // TEST_COURSE_TODAY, when the fetch Session and the TypeScript Course haven't been reached.
+  {
+    group: 3,
+    question: "Varför avvisas inte promiset från fetch när servern svarar 404?",
+    kind: "upcoming",
+    mustNotContain: ["response.ok", "nätverksfel"],
+  },
+  { group: 3, question: "Hur läser jag JSON-svaret från fetch?", kind: "upcoming", mustNotContain: ["response.json"] },
+  {
+    group: 3,
+    question: "Vad är ett interface i TypeScript?",
+    kind: "upcoming",
+    mustNotContain: ["formen på ett objekt"],
+  },
 ];

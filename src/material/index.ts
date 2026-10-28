@@ -3,6 +3,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { embeddingModelId, embedTexts } from "@/ai/embed";
 import type { AiModels } from "@/ai/models";
 import { chunks, sources } from "@/db/schema";
+import { unlocksOn, type IsoDate } from "@/unlocking";
 
 export type SourceKind = (typeof sources.$inferInsert)["kind"];
 
@@ -13,6 +14,10 @@ export type SourceInput = {
   courseName: string;
   title: string;
   url: string;
+  /** Start of the Course period, from Notion. */
+  courseStartsOn: IsoDate;
+  /** A Session's date, from Notion. */
+  sessionDate?: IsoDate;
   text: string;
 };
 
@@ -82,6 +87,7 @@ export async function indexSource(
       courseName: input.courseName,
       title: input.title,
       url: input.url,
+      unlocksOn: unlocksOn(input),
     };
     const [row] = await tx
       .insert(sources)

@@ -4,6 +4,7 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useState } from "react";
 import type { ChatMessage } from "@/answering/messages";
+import { formatSwedishDate } from "@/unlocking";
 
 type Props = { cohorts?: { id: string; name: string }[] };
 
@@ -49,6 +50,15 @@ export function Chat({ cohorts }: Props) {
           >
             {message.parts.map((part, i) => (part.type === "text" ? <span key={i}>{part.text}</span> : null))}
           </div>
+          {message.metadata?.upcoming && message.metadata.upcoming.length > 0 && (
+            <ul className="mt-2 flex flex-col gap-1 text-sm text-zinc-500">
+              {message.metadata.upcoming.map((item, i) => (
+                <li key={i}>
+                  Kommer {formatSwedishDate(item.unlocksOn)}: {item.title}
+                </li>
+              ))}
+            </ul>
+          )}
           {message.metadata?.sources && message.metadata.sources.length > 0 && (
             <ol className="mt-2 flex flex-col gap-1 text-sm">
               {message.metadata.sources.map((source) => (

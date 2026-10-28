@@ -7,6 +7,7 @@ import type { ChatMessage } from "@/answering/messages";
 import { auth } from "@/auth";
 import { db } from "@/db/client";
 import { cohorts } from "@/db/schema";
+import { swedishToday } from "@/unlocking";
 
 export const maxDuration = 60;
 
@@ -64,16 +65,21 @@ export async function POST(request: Request) {
     throw error;
   }
 
-  const { kind, sources, result } = await answer(
+  const { kind, sources, upcoming, result } = await answer(
     { db, models },
-    { question, conversation: await convertToModelMessages(messages.slice(0, -1)), cohortId },
+    {
+      question,
+      conversation: await convertToModelMessages(messages.slice(0, -1)),
+      cohortId,
+      today: swedishToday(),
+    },
   );
 
   return createUIMessageStreamResponse({
     stream: toUIMessageStream({
       stream: result.stream,
       originalMessages: messages,
-      messageMetadata: ({ part }) => (part.type === "start" ? { kind, sources } : undefined),
+      messageMetadata: ({ part }) => (part.type === "start" ? { kind, sources, upcoming } : undefined),
     }),
   });
 }
