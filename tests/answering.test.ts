@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createFakeModels } from "../src/ai/fake";
 import { answer } from "../src/answering";
+import { listQuestionLog } from "../src/question-log";
 import { createPool } from "../src/db/pool";
 import { cohorts } from "../src/db/schema";
 import { indexSource } from "../src/material";
@@ -91,7 +92,7 @@ describe("answer", () => {
   it("says when Upcoming material comes, without citing or revealing it", async () => {
     const result = await answer(
       { db, models },
-      { question: "Hur kontrollerar jag response.ok efter fetch?", conversation: [], cohortId, today: TEST_COURSE_TODAY },
+      { question: "Vad betyder response.ok?", conversation: [], cohortId, today: TEST_COURSE_TODAY },
     );
 
     expect(result.kind).toBe("upcoming");
@@ -104,7 +105,7 @@ describe("answer", () => {
   it("answers from the same material once it is Unlocked", async () => {
     const result = await answer(
       { db, models },
-      { question: "Hur kontrollerar jag response.ok efter fetch?", conversation: [], cohortId, today: "2026-12-08" },
+      { question: "Vad betyder response.ok?", conversation: [], cohortId, today: "2026-12-08" },
     );
 
     expect(result.kind).toBe("direct");
@@ -117,9 +118,124 @@ describe("answer", () => {
 
     const result = await answer(
       { db, models },
-      { question: "Hur kontrollerar jag response.ok efter fetch?", conversation: [], cohortId: demoCohortId, today: "2027-06-01" },
+      { question: "Vad betyder response.ok?", conversation: [], cohortId: demoCohortId, today: "2027-06-01" },
     );
 
     expect(result.kind).toBe("upcoming");
+  });
+
+  it("says plainly when the material doesn't cover a question, citing nothing", async () => {
+    const result = await answer(
+      { db, models },
+      { question: "Hur fungerar useEffect i React?", conversation: [], cohortId, today: TEST_COURSE_TODAY },
+    );
+
+    expect(result.kind).toBe("uncovered");
+    expect(result.sources).toEqual([]);
+    expect(result.upcoming).toEqual([]);
+  });
+});
+
+describe("answer, in a Conversation", () => {
+  it("understands a follow-up from the question before it", async () => {
+    const result = await answer(
+      { db, models },
+      {
+        question: "Kan du förklara mer?",
+        conversation: [
+          { role: "user", content: "Vad är skillnaden mellan let och const?" },
+          { role: "assistant", content: "const kan inte tilldelas om [1]." },
+        ],
+        cohortId,
+        today: TEST_COURSE_TODAY,
+      },
+    );
+
+    expect(result.kind).toBe("direct");
+    expect(result.sources[0].title).toBe("Variabler: let och const");
+  });
+
+  it("names Upcoming material that covers part of a question, without citing it", async () => {
+    const result = await answer(
+      { db, models },
+      { question: "Vad är const, och vad betyder response.ok?", conversation: [], cohortId, today: TEST_COURSE_TODAY },
+    );
+
+    expect(result.kind).toBe("direct");
+    expect(result.sources.map((s) => s.title)).toEqual(["Variabler: let och const"]);
+    expect(result.upcoming.map((s) => s.title)).toEqual(["Föreläsning: fetch och API:er"]);
+  });
+});
+
+describe("Question Log", () => {
+  async function ask(question: string) {
+    const result = await answer({ db, models }, { question, conversation: [], cohortId, today: TEST_COURSE_TODAY });
+    await result.result.text;
+  }
+
+  it("logs each question with its kind, Topic, Sources and week", async () => {
+    await ask("Vad är skillnaden mellan let och const?");
+
+    const [entry] = await listQuestionLog(db, cohortId);
+    expect(entry).toMatchObject({
+      question: "Vad är skillnaden mellan let och const?",
+      kind: "direct",
+      topic: "Variabler: let och const",
+      week: "2026-W40",
+    });
+    expect(entry.sources).toContain("Variabler: let och const");
+  });
+
+  it("logs an Unanswered Question without a Topic", async () => {
+    await ask("Hur fungerar useEffect i React?");
+
+    const [entry] = await listQuestionLog(db, cohortId);
+    expect(entry).toMatchObject({ kind: "uncovered", topic: null, sources: [] });
+  });
+
+  it("removes pasted code before logging", async () => {
+    await ask("Varför kraschar det här?\n```js\nconst apiKey = 'hemlig-nyckel';\nfetchTodos(apiKey).map(render);\n```");
+
+    const [entry] = await listQuestionLog(db, cohortId);
+    expect(entry.question).toContain("Varför kraschar det här?");
+    expect(entry.question).not.toContain("hemlig-nyckel");
+    expect(entry.question).not.toContain("fetchTodos");
+  });
+
+  it("keeps questions that only mention code words", async () => {
+    await ask("for-loopar, hur funkar de?");
+    await ask("Vad är skillnaden mellan <div> och <span>?");
+
+    const questions = (await listQuestionLog(db, cohortId)).map((e) => e.question);
+    expect(questions).toContain("for-loopar, hur funkar de?");
+    expect(questions).toContain("Vad är skillnaden mellan <div> och <span>?");
+  });
+
+  it("removes pasted secrets and config lines", async () => {
+    await ask("Funkar inte:\nAPI_KEY=sk-live-1234567890\nAuthorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc");
+
+    const [entry] = await listQuestionLog(db, cohortId);
+    expect(entry.question).not.toContain("sk-live");
+    expect(entry.question).not.toContain("eyJhbGci");
+  });
+
+  it("doesn't log the Teacher's own test questions", async () => {
+    const result = await answer(
+      { db, models },
+      { question: "Vad är const?", conversation: [], cohortId, today: TEST_COURSE_TODAY, logQuestion: false },
+    );
+    await result.result.text;
+
+    expect(await listQuestionLog(db, cohortId)).toEqual([]);
+  });
+
+  it("can't hold who asked: the log has no column for any identifier", async () => {
+    const columns = await db.execute<{ column_name: string }>(
+      sql`select column_name from information_schema.columns where table_name = 'question_log'`,
+    );
+
+    expect(columns.rows.map((c) => c.column_name).sort()).toEqual(
+      ["asked_at", "cohort_id", "id", "kind", "question", "sources", "topic", "uncovered_part", "week"].sort(),
+    );
   });
 });
