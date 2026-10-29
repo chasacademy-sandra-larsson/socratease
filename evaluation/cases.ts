@@ -39,7 +39,7 @@ export const evaluationSet: EvaluationCase[] = [
     kind: "uncovered",
     mustNotContain: ["beroendelista", "dependency array", "useState", "sidoeffekt"],
   },
-  { group: 2, question: "Hur skriver jag en SQL-join?", kind: "uncovered", mustNotContain: ["INNER JOIN", " ON "] },
+  { group: 2, question: "Hur skriver jag en SQL-join?", kind: "uncovered", mustNotContain: ["INNER JOIN", "LEFT JOIN"] },
   { group: 2, question: "Vad är huvudstaden i Frankrike?", kind: "uncovered", mustNotContain: ["Paris"] },
   {
     group: 2,

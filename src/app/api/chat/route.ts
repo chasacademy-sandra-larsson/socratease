@@ -72,6 +72,8 @@ export async function POST(request: Request) {
       conversation: await convertToModelMessages(messages.slice(0, -1)),
       cohortId,
       today: swedishToday(),
+      // The Question Log is for Students' questions; the Teacher's own tries would skew it.
+      logQuestion: viewer.role === "student",
     },
   );
 

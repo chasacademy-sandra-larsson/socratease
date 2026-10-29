@@ -136,6 +136,37 @@ describe("answer", () => {
   });
 });
 
+describe("answer, in a Conversation", () => {
+  it("understands a follow-up from the question before it", async () => {
+    const result = await answer(
+      { db, models },
+      {
+        question: "Kan du förklara mer?",
+        conversation: [
+          { role: "user", content: "Vad är skillnaden mellan let och const?" },
+          { role: "assistant", content: "const kan inte tilldelas om [1]." },
+        ],
+        cohortId,
+        today: TEST_COURSE_TODAY,
+      },
+    );
+
+    expect(result.kind).toBe("direct");
+    expect(result.sources[0].title).toBe("Variabler: let och const");
+  });
+
+  it("names Upcoming material that covers part of a question, without citing it", async () => {
+    const result = await answer(
+      { db, models },
+      { question: "Vad är const, och vad betyder response.ok?", conversation: [], cohortId, today: TEST_COURSE_TODAY },
+    );
+
+    expect(result.kind).toBe("direct");
+    expect(result.sources.map((s) => s.title)).toEqual(["Variabler: let och const"]);
+    expect(result.upcoming.map((s) => s.title)).toEqual(["Föreläsning: fetch och API:er"]);
+  });
+});
+
 describe("Question Log", () => {
   async function ask(question: string) {
     const result = await answer({ db, models }, { question, conversation: [], cohortId, today: TEST_COURSE_TODAY });
@@ -169,6 +200,33 @@ describe("Question Log", () => {
     expect(entry.question).toContain("Varför kraschar det här?");
     expect(entry.question).not.toContain("hemlig-nyckel");
     expect(entry.question).not.toContain("fetchTodos");
+  });
+
+  it("keeps questions that only mention code words", async () => {
+    await ask("for-loopar, hur funkar de?");
+    await ask("Vad är skillnaden mellan <div> och <span>?");
+
+    const questions = (await listQuestionLog(db, cohortId)).map((e) => e.question);
+    expect(questions).toContain("for-loopar, hur funkar de?");
+    expect(questions).toContain("Vad är skillnaden mellan <div> och <span>?");
+  });
+
+  it("removes pasted secrets and config lines", async () => {
+    await ask("Funkar inte:\nAPI_KEY=sk-live-1234567890\nAuthorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc");
+
+    const [entry] = await listQuestionLog(db, cohortId);
+    expect(entry.question).not.toContain("sk-live");
+    expect(entry.question).not.toContain("eyJhbGci");
+  });
+
+  it("doesn't log the Teacher's own test questions", async () => {
+    const result = await answer(
+      { db, models },
+      { question: "Vad är const?", conversation: [], cohortId, today: TEST_COURSE_TODAY, logQuestion: false },
+    );
+    await result.result.text;
+
+    expect(await listQuestionLog(db, cohortId)).toEqual([]);
   });
 
   it("can't hold who asked: the log has no column for any identifier", async () => {

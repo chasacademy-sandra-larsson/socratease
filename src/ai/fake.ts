@@ -92,7 +92,8 @@ function words(text: string): Set<string> {
 
 /** The fake coverage decision: material that shares a meaningful word with the question. */
 function fakeCoverage(prompt: string): { sources: number[]; uncoveredPart: null } {
-  const question = words(/^Fråga: (.*)$/m.exec(prompt)?.[1] ?? "");
+  // A follow-up is understood from the question before it.
+  const question = words([...prompt.matchAll(/^(?:Tidigare fråga|Fråga): (.*)$/gm)].map((m) => m[1]).join(" "));
   const blocks = prompt.split(/^\[(\d+)\] /m).slice(1);
   const sources: number[] = [];
   for (let i = 0; i < blocks.length; i += 2) {

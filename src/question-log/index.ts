@@ -49,10 +49,15 @@ export async function listQuestionLog(db: NodePgDatabase, cohortId: string): Pro
 
 const CODE_PLACEHOLDER = "[kod borttagen]";
 
-/** Removes fenced code, inline code and lines that look like code. */
+/** Removes fenced code, inline code, lines that look like code, and secrets. */
 export function removeCode(text: string): string {
-  const withoutBlocks = text.replace(/```[\s\S]*?(```|$)/g, CODE_PLACEHOLDER).replace(/`[^`\n]+`/g, CODE_PLACEHOLDER);
-  const lines = withoutBlocks.split("\n").map((line) => (looksLikeCode(line) ? CODE_PLACEHOLDER : line));
+  const withoutBlocks = text
+    .replaceAll("\u0000", "")
+    .replace(/```[\s\S]*?(```|$)/g, CODE_PLACEHOLDER)
+    .replace(/`[^`\n]+`/g, CODE_PLACEHOLDER);
+  const lines = withoutBlocks
+    .split("\n")
+    .map((line) => (looksLikeCode(line) ? CODE_PLACEHOLDER : removeSecrets(line)));
   // Collapse runs of removed lines into one placeholder.
   return lines
     .filter((line, i) => !(line === CODE_PLACEHOLDER && lines[i - 1] === CODE_PLACEHOLDER))
@@ -60,11 +65,29 @@ export function removeCode(text: string): string {
     .trim();
 }
 
+/**
+ * Code, not prose about code: statements, declarations, calls chained on calls, markup with
+ * attributes or closing tags, and config lines (KEY=value, Header: value). A question that only
+ * mentions "for-loopar" or "<div>" is kept.
+ */
 function looksLikeCode(line: string): boolean {
-  return (
-    /[;{}]\s*$|=>|^\s*(const|let|var|function|import|export|return|if|for|while|class)\b|<\/?[a-zA-Z][^>]*>/.test(line) ||
-    /\w+\([^)]*\)\.\w+/.test(line)
-  );
+  return [
+    /[;{}]\s*$/, // ends a statement or block
+    /=>/, // arrow function
+    /^\s*(const|let|var)\s+[\w${}[\],\s]+=/, // declaration
+    /^\s*(function\b|import\s.+\sfrom\s|export\s+(default|const|function|class)\b)/,
+    /^\s*(if|for|while|switch)\s*\(/, // control flow
+    /^\s*return\s+[\w.$]+\(/, // return of a call
+    /\w+\([^)]*\)\.\w+/, // chained calls
+    /<\/[a-zA-Z][\w-]*>|<[a-zA-Z][\w-]*\s+[\w-]+=/, // closing tags, tags with attributes
+    /^\s*[A-Z][A-Z0-9_]*\s*=\s*\S/, // KEY=value
+    /^\s*[\w-]+:\s*(Bearer|Basic)\s/i, // auth header
+  ].some((pattern) => pattern.test(line));
+}
+
+/** Long token-like strings (API keys, JWTs) are replaced even inside prose. */
+function removeSecrets(line: string): string {
+  return line.replace(/\b(?:sk|pk|ghp|xox[a-z])[-_][\w-]{8,}|\beyJ[\w-]+\.[\w.-]*|\b[A-Za-z0-9_-]{32,}\b/g, CODE_PLACEHOLDER);
 }
 
 /** The ISO week of a date, e.g. "2026-W44". */
