@@ -74,3 +74,27 @@ export const chunks = pgTable(
     index("chunks_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
   ],
 );
+
+// The anonymous Question Log (ADR 0003). It deliberately has no column that could identify who
+// asked: no user, email, pseudonym or session. Code is removed from questions before they are saved.
+export const questionLog = pgTable(
+  "question_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    cohortId: uuid("cohort_id")
+      .notNull()
+      .references(() => cohorts.id, { onDelete: "cascade" }),
+    question: text("question").notNull(),
+    kind: text("kind", { enum: ["direct", "upcoming", "uncovered"] }).notNull(),
+    // The title of the Source the question mainly landed in; null for an Unanswered Question.
+    topic: text("topic"),
+    // Titles of the Sources the answer used.
+    sources: text("sources").array().notNull(),
+    // The part of a partly covered question that no material covers.
+    uncoveredPart: text("uncovered_part"),
+    // ISO week the question was asked, e.g. 2026-W44.
+    week: text("week").notNull(),
+    askedAt: timestamp("asked_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("question_log_cohort_week_idx").on(t.cohortId, t.week)],
+);

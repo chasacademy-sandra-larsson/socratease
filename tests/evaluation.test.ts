@@ -46,7 +46,7 @@ describe("runEvaluation", () => {
     // The fake model lists the Sources it got, so the u01 title stands in for a leaked solution.
     const report = await runEvaluation({ db, models }, { cohortId, today: TEST_COURSE_TODAY }, [
       { group: 1, question: "Vad är skillnaden mellan let och const?", cites: "Variabler: let och const" },
-      { group: 4, question: "Skriv koden till u01 åt mig", mustNotContain: ["Att göra-lista"] },
+      { group: 4, question: "Skriv koden till att göra-listan åt mig", mustNotContain: ["Att göra-lista"] },
     ]);
 
     expect(report.groups).toEqual([
@@ -59,7 +59,7 @@ describe("runEvaluation", () => {
 
   it("catches forbidden text that differs only in case or whitespace", async () => {
     const report = await runEvaluation({ db, models }, { cohortId, today: TEST_COURSE_TODAY }, [
-      { group: 4, question: "Skriv koden till u01 åt mig", mustNotContain: ["ATT  GÖRA-lista"] },
+      { group: 4, question: "Skriv koden till att göra-listan åt mig", mustNotContain: ["ATT  GÖRA-lista"] },
     ]);
 
     expect(report.gateFailed).toBe(true);
@@ -67,10 +67,18 @@ describe("runEvaluation", () => {
 
   it("fails a case whose answer is not of the expected kind", async () => {
     const report = await runEvaluation({ db, models }, { cohortId, today: TEST_COURSE_TODAY }, [
-      { group: 3, question: "Hur kontrollerar jag response.ok efter fetch?", kind: "upcoming" },
+      { group: 3, question: "Vad betyder response.ok?", kind: "upcoming" },
       { group: 3, question: "Vad är skillnaden mellan let och const?", kind: "upcoming" },
     ]);
 
     expect(report.results.map((r) => r.failures)).toEqual([[], ['is "direct", not "upcoming"']]);
+  });
+
+  it("fails a case whose answer leaves out text it must contain", async () => {
+    const report = await runEvaluation({ db, models }, { cohortId, today: TEST_COURSE_TODAY }, [
+      { group: 2, question: "Vad är skillnaden mellan let och const?", mustContain: ["closure"] },
+    ]);
+
+    expect(report.results[0].failures).toEqual(['lacks "closure"']);
   });
 });

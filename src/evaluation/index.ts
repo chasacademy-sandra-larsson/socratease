@@ -15,6 +15,8 @@ export type EvaluationCase = {
   kind?: AnswerKind;
   /** Title of the Source the answer must cite with its number, e.g. [1]. */
   cites?: string;
+  /** Text the answer must contain, e.g. the uncovered part of a partly covered question. */
+  mustContain?: string[];
   /** Text the answer must never contain, e.g. a line of an Assignment's solution. */
   mustNotContain?: string[];
 };
@@ -53,6 +55,9 @@ export async function runEvaluation(
       if (!source || !text.includes(`[${source.number}]`)) {
         failures.push(`cites no "${evaluationCase.cites}"`);
       }
+    }
+    for (const required of evaluationCase.mustContain ?? []) {
+      if (!normalize(text).includes(normalize(required))) failures.push(`lacks "${required}"`);
     }
     for (const forbidden of evaluationCase.mustNotContain ?? []) {
       if (normalize(text).includes(normalize(forbidden))) failures.push(`contains "${forbidden}"`);
