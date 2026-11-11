@@ -1,0 +1,1 @@
+ALTER TABLE "cohorts" ADD COLUMN "notion_root_page_id" text;
