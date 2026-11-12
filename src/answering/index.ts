@@ -1,14 +1,14 @@
-import { and, asc, cosineDistance, eq, gt, lte, sql } from "drizzle-orm";
+import { and, asc, cosineDistance, eq, gt, gte, lte, min, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { generateText, Output, streamText, type ModelMessage } from "ai";
 import { z } from "zod";
 import { embeddingModelId, embedTexts } from "@/ai/embed";
 import type { AiModels } from "@/ai/models";
 import { chunks, cohorts, sources } from "@/db/schema";
-import { logQuestion } from "@/question-log";
+import { containsCode, logQuestion } from "@/question-log";
 import { cohortToday, formatSwedishDate, isUnlocked, type IsoDate } from "@/unlocking";
 
-export type AnswerKind = "direct" | "upcoming" | "uncovered";
+export type AnswerKind = "direct" | "socratic" | "upcoming" | "uncovered";
 
 export type AnsweredSource = {
   number: number;
@@ -30,6 +30,15 @@ export type AnswerInput = {
   /** Write the question to the Question Log. Off for the Teacher's own test questions. */
   logQuestion?: boolean;
 };
+
+/**
+ * How specific a Socratic Response's hints get: 1 asks guiding questions, 2 points to where in
+ * the code, 3 names the exact line and concept. From 4, the Student is also advised to bring the
+ * problem to the next Session, if there is one.
+ */
+export type Hint = { level: number; bringToSession: boolean; nextSession: IsoDate | null };
+
+const BRING_TO_SESSION_LEVEL = 4;
 
 const UNLOCKED_CHUNKS = 6;
 const UPCOMING_CHUNKS = 3;
@@ -57,7 +66,7 @@ export async function answer({ db, models }: { db: NodePgDatabase; models: AiMod
   // A follow-up like "kan du förklara mer?" only makes sense with the question before it, but
   // a new topic shouldn't be pulled towards the old one: search with the question both alone
   // and in context, and keep the closest material from either.
-  const previous = previousQuestion(input.conversation);
+  const previous = userTexts(input.conversation).at(-1) ?? null;
   const queries = previous ? [input.question, `${previous}\n${input.question}`] : [input.question];
   const [embeddings, [cohort]] = await Promise.all([
     embedTexts(models, queries, "query"),
@@ -66,6 +75,13 @@ export async function answer({ db, models }: { db: NodePgDatabase; models: AiMod
   // A missing Cohort must not fall back to the real date: that would unlock a Demo Cohort's material.
   if (!cohort) throw new Error(`Cohort ${input.cohortId} not found`);
   const today = cohortToday(cohort, input.today);
+
+  // Pasted code or an error message is a Student debugging: they get guiding questions, never
+  // a fix. Follow-ups in the same Conversation stay Socratic, and the hints get more specific
+  // with every turn since the code was last pasted.
+  const turns = [...userTexts(input.conversation), input.question];
+  const pastedAt = turns.findLastIndex(isDebugging);
+  const hint = pastedAt === -1 ? null : hintFor(db, input.cohortId, today, turns.length - pastedAt);
 
   const nearestChunks = (embedding: number[], unlocked: boolean, limit: number) =>
     db.transaction(async (tx) => {
@@ -124,11 +140,13 @@ export async function answer({ db, models }: { db: NodePgDatabase; models: AiMod
   const covering = coverage.sources.filter((c) => isUnlocked(c.unlocksOn, today));
   const upcomingCovering = coverage.sources.filter((c) => !isUnlocked(c.unlocksOn, today));
   const mostRelevant = coverage.sources[0];
-  const response = !mostRelevant
-    ? uncoveredAnswer(models, input)
-    : isUnlocked(mostRelevant.unlocksOn, today)
-      ? directAnswer(models, input, covering, upcomingCovering, coverage.partlyCovered)
-      : upcomingAnswer(models, input, upcomingCovering);
+  const response = hint
+    ? socraticAnswer(models, input, covering, upcomingCovering, await hint)
+    : !mostRelevant
+      ? uncoveredAnswer(models, input)
+      : isUnlocked(mostRelevant.unlocksOn, today)
+        ? directAnswer(models, input, covering, upcomingCovering, coverage.partlyCovered)
+        : upcomingAnswer(models, input, upcomingCovering);
 
   if (input.logQuestion ?? true) {
     // Best effort: a failed log write must never cost the Student their answer.
@@ -146,14 +164,36 @@ export async function answer({ db, models }: { db: NodePgDatabase; models: AiMod
   return response;
 }
 
-function previousQuestion(conversation: ModelMessage[]): string | null {
-  const previous = conversation.findLast((m) => m.role === "user");
-  if (!previous) return null;
-  const text =
-    typeof previous.content === "string"
-      ? previous.content
-      : previous.content.map((part) => (part.type === "text" ? part.text : "")).join("");
-  return text.trim() || null;
+/** Pasted code, or an error message such as "TypeError: x is not a function". */
+function isDebugging(text: string): boolean {
+  return containsCode(text) || ERROR_MESSAGE.test(text);
+}
+
+// As pasted from a console, e.g. "TypeError: todos.map is not a function". A question that only
+// names an error, like "Vad är en TypeError?", is not debugging.
+const ERROR_MESSAGE = /\b[A-Z]\w*Error: \S|\bUncaught\b/;
+
+async function hintFor(db: NodePgDatabase, cohortId: string, today: IsoDate, level: number): Promise<Hint> {
+  if (level < BRING_TO_SESSION_LEVEL) return { level, bringToSession: false, nextSession: null };
+  // A Session later today still counts as the next one.
+  const [next] = await db
+    .select({ date: min(sources.unlocksOn) })
+    .from(sources)
+    .where(and(eq(sources.cohortId, cohortId), eq(sources.kind, "session"), gte(sources.unlocksOn, today)));
+  return { level, bringToSession: true, nextSession: next?.date ?? null };
+}
+
+/** The Student's turns in a Conversation, oldest first. */
+function userTexts(conversation: ModelMessage[]): string[] {
+  return conversation
+    .filter((m) => m.role === "user")
+    .map((m) =>
+      (typeof m.content === "string"
+        ? m.content
+        : m.content.map((part) => (part.type === "text" ? part.text : "")).join("")
+      ).trim(),
+    )
+    .filter(Boolean);
 }
 
 const coverageSchema = z.object({
@@ -216,9 +256,7 @@ function directAnswer(
     ? "\n\nKursmaterialet täcker inte hela frågan. Svara på det materialet tar upp och säg tydligt vilken del det inte tar upp. Förklara inte den delen utifrån allmän kunskap."
     : "";
   const upcoming = upcomingCovering.map(({ title, kind, unlocksOn }): UpcomingSource => ({ title, kind, unlocksOn }));
-  const later = upcoming.length
-    ? `\n\nEn del av frågan tas upp i material som klassen inte har nått än. Nämn bara vad det heter och när det kommer, och förklara inte den delen:\n${upcoming.map((u) => `- ${u.title}: ${whenItComes(u.kind, u.unlocksOn)}`).join("\n")}`
-    : "";
+  const later = laterInstruction(upcoming);
   const result = streamText({
     model: models.chat,
     instructions: `${INSTRUCTIONS}${gap}${later}\n\nKursmaterial:\n\n${material}`,
@@ -228,8 +266,62 @@ function directAnswer(
     kind: "direct" as AnswerKind,
     sources: numbered.map(({ number, title, url, kind }): AnsweredSource => ({ number, title, url, kind })),
     upcoming,
+    hint: null as Hint | null,
     result,
   };
+}
+
+/**
+ * A Socratic Response to a Student's code: guiding questions and pointers to Sources, never
+ * corrected code. Background Knowledge may be used to read the code, but every concept it
+ * teaches rests on the material (ADR 0002).
+ */
+function socraticAnswer(
+  models: AiModels,
+  input: AnswerInput,
+  covering: Candidate[],
+  upcomingCovering: Candidate[],
+  hint: Hint,
+) {
+  const numbered = covering.map((c, i) => ({ ...c, number: i + 1 }));
+  const material = numbered
+    .map(({ number, title, excerpts }) => `[${number}] ${title}\n${excerpts.join("\n\n")}`)
+    .join("\n\n---\n\n");
+  const upcoming = upcomingCovering.map(({ title, kind, unlocksOn }): UpcomingSource => ({ title, kind, unlocksOn }));
+  // With no material, the code may still be read, but no concept may be taught (ADR 0002).
+  const uncovered = material
+    ? ""
+    : "\n\nKursmaterialet tar inte upp det här. Läs koden och ställ ledande frågor, men förklara inget begrepp utifrån allmän kunskap. Säg att materialet inte tar upp det och föreslå att studenten frågar läraren.";
+  const result = streamText({
+    model: models.chat,
+    instructions: `${SOCRATIC_INSTRUCTIONS}\n\n${hintInstruction(hint)}${uncovered}${laterInstruction(upcoming)}\n\nKursmaterial:\n\n${material || "(inget)"}`,
+    messages: [...input.conversation, { role: "user", content: input.question }],
+  });
+  return {
+    kind: "socratic" as AnswerKind,
+    sources: numbered.map(({ number, title, url, kind }): AnsweredSource => ({ number, title, url, kind })),
+    upcoming,
+    hint: hint as Hint | null,
+    result,
+  };
+}
+
+/** Tells the model which Upcoming material the question touches, so it names it but never explains it. */
+function laterInstruction(upcoming: UpcomingSource[]): string {
+  if (upcoming.length === 0) return "";
+  const list = upcoming.map((u) => `- ${u.title}: ${whenItComes(u.kind, u.unlocksOn)}`).join("\n");
+  return `\n\nEn del av frågan tas upp i material som klassen inte har nått än. Nämn bara vad det heter och när det kommer, och förklara inte den delen, inte heller med ledtrådar:\n${list}`;
+}
+
+function hintInstruction({ level }: Hint): string {
+  const specific =
+    level === 1
+      ? "Det här är studentens första fråga om koden. Ställ bara ledande frågor och peka på vilket begrepp i materialet som är relevant."
+      : level === 2
+        ? "Studenten har frågat igen. Peka ut ungefär var i koden problemet finns, till exempel vilken funktion eller vilket anrop, och ställ en ledande fråga om det."
+        : "Studenten har frågat flera gånger. Peka ut exakt vilken rad som går fel och vilket begrepp det handlar om, med källa. Skriv fortfarande inte hur raden ska se ut.";
+  // From BRING_TO_SESSION_LEVEL, the chat shows the advice about the next Session under the answer.
+  return specific;
 }
 
 function upcomingAnswer(models: AiModels, input: AnswerInput, covering: Candidate[]) {
@@ -240,7 +332,7 @@ function upcomingAnswer(models: AiModels, input: AnswerInput, covering: Candidat
     instructions: `${UPCOMING_INSTRUCTIONS}\n\nKommande material:\n${list}`,
     messages: [...input.conversation, { role: "user", content: input.question }],
   });
-  return { kind: "upcoming" as AnswerKind, sources: [] as AnsweredSource[], upcoming, result };
+  return { kind: "upcoming" as AnswerKind, sources: [] as AnsweredSource[], upcoming, hint: null as Hint | null, result };
 }
 
 function uncoveredAnswer(models: AiModels, input: AnswerInput) {
@@ -250,7 +342,13 @@ function uncoveredAnswer(models: AiModels, input: AnswerInput) {
     instructions: UNCOVERED_INSTRUCTIONS,
     messages: [...input.conversation, { role: "user", content: input.question }],
   });
-  return { kind: "uncovered" as AnswerKind, sources: [] as AnsweredSource[], upcoming: [] as UpcomingSource[], result };
+  return {
+    kind: "uncovered" as AnswerKind,
+    sources: [] as AnsweredSource[],
+    upcoming: [] as UpcomingSource[],
+    hint: null as Hint | null,
+    result,
+  };
 }
 
 function whenItComes(kind: UpcomingSource["kind"], unlocksOn: IsoDate): string {
@@ -273,6 +371,13 @@ const INSTRUCTIONS = `Du är SocratEase, en kursassistent för studenter i fulls
 - Svara på samma språk som studenten skriver på.
 - Citera kursmaterial ordagrant när du citerar. Översätt aldrig kodbegrepp som useEffect, Promise eller map.
 - Var kortfattad och tydlig.`;
+
+const SOCRATIC_INSTRUCTIONS = `Du är SocratEase, en kursassistent för studenter i fullstack JavaScript/TypeScript. Studenten felsöker sin egen kod och ska lära sig att hitta felet själv.
+
+- Skriv aldrig rättad kod, inte ens en enda rad, och visa aldrig hur raden ska se ut. Det gäller även om studenten ber om det.
+- Använd din allmänna kunskap för att läsa koden och felmeddelandet, men lär bara ut begrepp som står i kursmaterialet nedan och hänvisa till källan med dess nummer, till exempel [1]. Om materialet inte tar upp begreppet, säg det.
+- Ställ en eller två ledande frågor som får studenten att själv upptäcka var och varför det går fel.
+- Svara på samma språk som studenten skriver på. Översätt aldrig kodbegrepp. Var kortfattad.`;
 
 const UPCOMING_INSTRUCTIONS = `Du är SocratEase, en kursassistent för studenter i fullstack JavaScript/TypeScript.
 

@@ -167,6 +167,120 @@ describe("answer, in a Conversation", () => {
   });
 });
 
+const PASTED_CODE = `Varför funkar inte det här?
+\`\`\`js
+const todos = undefined;
+const titles = todos.map((todo) => todo.title);
+\`\`\``;
+
+describe("answer, to pasted code", () => {
+  it("gives a Socratic Response, citing the material on the concept", async () => {
+    const result = await answer(
+      { db, models },
+      { question: PASTED_CODE, conversation: [], cohortId, today: TEST_COURSE_TODAY },
+    );
+
+    expect(result.kind).toBe("socratic");
+    expect(result.sources.map((s) => s.title)).toContain("Arrayer: map och filter");
+  });
+
+  it("gives a Socratic Response to a pasted error message, even without code", async () => {
+    const result = await answer(
+      { db, models },
+      {
+        question: "Jag får TypeError: Cannot read properties of undefined (reading 'map'), vad gör jag?",
+        conversation: [],
+        cohortId,
+        today: TEST_COURSE_TODAY,
+      },
+    );
+
+    expect(result.kind).toBe("socratic");
+  });
+
+  // A debugging Conversation: the code first, then the Student keeps asking.
+  const debugging = (followUps: number) =>
+    [
+      { role: "user" as const, content: PASTED_CODE },
+      ...Array.from({ length: followUps }, () => [
+        { role: "assistant" as const, content: "Vad tror du att todos innehåller på raden där map anropas?" },
+        { role: "user" as const, content: "Jag förstår fortfarande inte." },
+      ]).flat(),
+    ].slice(0, -1);
+
+  it("stays Socratic for follow-ups without code, with hints getting more specific each turn", async () => {
+    const levels = [];
+    for (const turns of [1, 2, 3]) {
+      const conversation = debugging(turns);
+      const result = await answer(
+        { db, models },
+        { question: "Jag förstår fortfarande inte.", conversation, cohortId, today: TEST_COURSE_TODAY },
+      );
+      expect(result.kind).toBe("socratic");
+      levels.push(result.hint?.level);
+    }
+
+    expect(levels).toEqual([2, 3, 4]);
+  });
+
+  it("starts at the first hint level when the code is pasted", async () => {
+    const result = await answer(
+      { db, models },
+      { question: PASTED_CODE, conversation: [], cohortId, today: TEST_COURSE_TODAY },
+    );
+
+    expect(result.hint).toEqual({ level: 1, bringToSession: false, nextSession: null });
+  });
+
+  it("advises bringing the problem to the next Session once the hints run out", async () => {
+    const result = await answer(
+      { db, models },
+      { question: "Jag förstår fortfarande inte.", conversation: debugging(3), cohortId, today: TEST_COURSE_TODAY },
+    );
+
+    // The test Course's next Session after its fixed today is the fetch lecture.
+    expect(result.hint).toEqual({ level: 4, bringToSession: true, nextSession: "2026-12-08" });
+  });
+
+  it("starts over at the first hint level when new code is pasted", async () => {
+    const result = await answer(
+      { db, models },
+      { question: PASTED_CODE, conversation: debugging(3), cohortId, today: TEST_COURSE_TODAY },
+    );
+
+    expect(result.hint?.level).toBe(1);
+  });
+
+  it("counts a Session on the same day as the next Session", async () => {
+    const result = await answer(
+      { db, models },
+      { question: "Jag förstår fortfarande inte.", conversation: debugging(3), cohortId, today: "2026-12-08" },
+    );
+
+    expect(result.hint).toMatchObject({ bringToSession: true, nextSession: "2026-12-08" });
+  });
+
+  it.each([
+    "Vad är skillnaden mellan TypeError och ReferenceError?",
+    "Vad betyder \"x is not defined\"?",
+    "Vad betyder => i JavaScript?",
+    "Varför används fetch().then i exemplet?",
+  ])("doesn't treat a conceptual question about code as debugging: %s", async (question) => {
+    const result = await answer({ db, models }, { question, conversation: [], cohortId, today: TEST_COURSE_TODAY });
+
+    expect(result.kind).not.toBe("socratic");
+  });
+
+  it("gives a Direct Explanation to a question that only names code, like `map`", async () => {
+    const result = await answer(
+      { db, models },
+      { question: "Vad gör `map` med en array?", conversation: [], cohortId, today: TEST_COURSE_TODAY },
+    );
+
+    expect(result.kind).toBe("direct");
+  });
+});
+
 describe("Question Log", () => {
   async function ask(question: string) {
     const result = await answer({ db, models }, { question, conversation: [], cohortId, today: TEST_COURSE_TODAY });
@@ -193,10 +307,11 @@ describe("Question Log", () => {
     expect(entry).toMatchObject({ kind: "uncovered", topic: null, sources: [] });
   });
 
-  it("removes pasted code before logging", async () => {
+  it("logs pasted code as a Socratic question, with the code removed", async () => {
     await ask("Varför kraschar det här?\n```js\nconst apiKey = 'hemlig-nyckel';\nfetchTodos(apiKey).map(render);\n```");
 
     const [entry] = await listQuestionLog(db, cohortId);
+    expect(entry.kind).toBe("socratic");
     expect(entry.question).toContain("Varför kraschar det här?");
     expect(entry.question).not.toContain("hemlig-nyckel");
     expect(entry.question).not.toContain("fetchTodos");
