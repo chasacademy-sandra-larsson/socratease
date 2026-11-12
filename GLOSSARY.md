@@ -99,7 +99,7 @@ The part of a student question that no Unlocked or Upcoming material covers, i.e
 _Avoid_: Failed question, unknown question
 
 **Topic** (ämne):
-The Source a question mainly landed in, i.e. the Session or section of Study Material the assistant leaned on most. An Unanswered Question has no Topic and is grouped by the week it was asked instead.
+The Source a question mainly landed in, i.e. the Session or section of Study Material the assistant leaned on most. An Unanswered Question has no Topic; it is grouped by the week it was asked and the Course that was running then.
 _Avoid_: Category, tag, label, subject
 
 **Evaluation Set** (testfrågor):

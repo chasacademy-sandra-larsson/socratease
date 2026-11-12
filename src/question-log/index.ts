@@ -107,3 +107,13 @@ export function isoWeek(date: IsoDate): string {
   const week = Math.ceil(((d.getTime() - yearStart) / 86400000 + 1) / 7);
   return `${d.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
 }
+
+/** The Sunday of an ISO week such as "2026-W41"; the inverse of isoWeek for the week's last day. */
+export function lastDayOfWeek(week: string): IsoDate {
+  const [year, number] = week.split("-W").map(Number);
+  // 4 January is always in week 1; step back to its Monday, then forward to the week's Sunday.
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const sunday = new Date(jan4);
+  sunday.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() + 6) % 7) + (number - 1) * 7 + 6);
+  return sunday.toISOString().slice(0, 10);
+}
