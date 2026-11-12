@@ -1,12 +1,11 @@
 import { convertToModelMessages, createUIMessageStreamResponse, toUIMessageStream } from "ai";
-import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { AiProviderNotConfiguredError, getModels } from "@/ai/models";
 import { answer } from "@/answering";
 import type { ChatMessage } from "@/answering/messages";
-import { auth } from "@/auth";
+import { logsQuestions } from "@/access";
+import { currentViewer } from "@/access/viewer";
 import { db } from "@/db/client";
-import { cohorts } from "@/db/schema";
 import { swedishToday } from "@/unlocking";
 
 export const maxDuration = 60;
@@ -21,28 +20,23 @@ const messageSchema = z.looseObject({
 
 const bodySchema = z.object({
   messages: z.array(messageSchema).min(1),
-  cohortId: z.uuid().optional(),
+  // The Cohort the chat was shown for, so a Conversation never continues in another Cohort.
+  cohortId: z.uuid(),
 });
 
 export async function POST(request: Request) {
-  const viewer = (await auth())?.viewer;
+  const viewer = await currentViewer();
   if (!viewer) return new Response("Unauthorized", { status: 401 });
 
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return new Response("Bad request", { status: 400 });
   const body = parsed.data;
 
-  // A Student always answers within their own Cohort. The Teacher picks one (until #20).
-  let cohortId: string;
-  if (viewer.role === "student") {
-    cohortId = viewer.cohortId;
-  } else {
-    const [cohort] = body.cohortId
-      ? await db.select({ id: cohorts.id }).from(cohorts).where(eq(cohorts.id, body.cohortId))
-      : [];
-    if (!cohort) return new Response("Choose a Cohort", { status: 400 });
-    cohortId = cohort.id;
-  }
+  // A Student, real or the Teacher viewing as one, always asks within their own Cohort.
+  if (viewer.role !== "student") return new Response("View as a Student to use the chat", { status: 403 });
+  const { cohortId } = viewer;
+  // The Teacher may have switched Cohort or view in another tab since this chat was opened.
+  if (body.cohortId !== cohortId) return new Response("The Cohort has changed; reload the page", { status: 409 });
 
   // The history comes from the browser (Conversations aren't stored, ADR 0003), so keep only
   // the latest turns and only their text; files and other parts never reach the model.
@@ -73,7 +67,7 @@ export async function POST(request: Request) {
       cohortId,
       today: swedishToday(),
       // The Question Log is for Students' questions; the Teacher's own tries would skew it.
-      logQuestion: viewer.role === "student",
+      logQuestion: logsQuestions(viewer),
     },
   );
 

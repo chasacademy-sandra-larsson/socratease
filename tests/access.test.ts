@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createPool } from "../src/db/pool";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { sql } from "drizzle-orm";
-import { importRoster, resolveAccess } from "../src/access";
+import { importRoster, logsQuestions, resolveAccess, viewAs } from "../src/access";
 import { cohorts } from "../src/db/schema";
 
 // Integration tests through the access decision: a Google identity + the Roster in the database.
@@ -89,5 +89,57 @@ describe("importRoster", () => {
         hostedDomain: "student.chasacademy.se",
       }, { teacherEmail }),
     ).toMatchObject({ granted: true, cohortName: "FJS26" });
+  });
+});
+
+describe("viewAs", () => {
+  async function cohort(name: string) {
+    const [row] = await db.insert(cohorts).values({ name }).returning({ id: cohorts.id });
+    return row.id;
+  }
+
+  it("lets the Teacher view as a Student of the chosen Cohort", async () => {
+    const fjs26 = await cohort("FJS26");
+
+    expect(await viewAs(db, { role: "teacher" }, fjs26)).toEqual({
+      role: "student",
+      cohortId: fjs26,
+      cohortName: "FJS26",
+      viewingAsTeacher: true,
+    });
+  });
+
+  it("keeps the Teacher a Teacher with no Cohort chosen, or one that doesn't exist", async () => {
+    expect(await viewAs(db, { role: "teacher" }, null)).toEqual({ role: "teacher" });
+    expect(await viewAs(db, { role: "teacher" }, "00000000-0000-0000-0000-000000000000")).toEqual({ role: "teacher" });
+    expect(await viewAs(db, { role: "teacher" }, "inte-ett-id")).toEqual({ role: "teacher" });
+  });
+
+  it("keeps the Teacher a Teacher for a Cohort that has ended, as no Student can get in", async () => {
+    const [ended] = await db
+      .insert(cohorts)
+      .values({ name: "FJS24", endsOn: "2026-06-12" })
+      .returning({ id: cohorts.id });
+
+    expect(await viewAs(db, { role: "teacher" }, ended.id, { today: new Date("2026-11-12") })).toEqual({
+      role: "teacher",
+    });
+  });
+
+  it("never lets a Student switch to another Cohort", async () => {
+    const own = await cohort("FJS26");
+    const other = await cohort("FJS27");
+    const student = { role: "student" as const, cohortId: own, cohortName: "FJS26" };
+
+    expect(await viewAs(db, student, other)).toEqual(student);
+  });
+
+  it("logs the questions of real Students only, not of the Teacher viewing as one", async () => {
+    const fjs26 = await cohort("FJS26");
+    const viewingAs = await viewAs(db, { role: "teacher" }, fjs26);
+
+    expect(logsQuestions({ role: "student", cohortId: fjs26, cohortName: "FJS26" })).toBe(true);
+    expect(logsQuestions(viewingAs)).toBe(false);
+    expect(logsQuestions({ role: "teacher" })).toBe(false);
   });
 });
