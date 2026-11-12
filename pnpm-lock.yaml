@@ -178,12 +178,18 @@ importers:
       '@huggingface/transformers':
         specifier: ^4.3.1
         version: 4.3.1(@types/node@20.19.43)
+      '@vercel/oidc':
+        specifier: 3.2.0
+        version: 3.2.0
       ai:
         specifier: ^7.0.154
         version: 7.0.154(zod@4.6.7)
       drizzle-orm:
         specifier: ^0.45.4
         version: 0.45.4(@types/pg@8.23.1)(pg@8.23.1)
+      google-auth-library:
+        specifier: 10.9.1
+        version: 10.9.1(supports-color@7.2.0)
       next:
         specifier: 16.4.3
         version: 16.4.3(@babel/core@7.29.7(supports-color@7.2.0))(@types/node@20.19.43)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
