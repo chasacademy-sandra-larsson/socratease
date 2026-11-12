@@ -360,6 +360,12 @@ describe("syncCohort", () => {
               children: [{ id: "z1", type: "paragraph", text: "🔗 https://us06web.zoom.us/my/fjs26 · 🕙 9.15–12.00" }],
             },
             {
+              id: "c-link-heading",
+              type: "callout",
+              text: "🔗 https://us06web.zoom.us/my/fjs26 · 🕙 10.00–12.00",
+              children: [{ id: "z0", type: "bulleted_list_item", text: "Jag släpper in dig från väntrummet." }],
+            },
+            {
               id: "c-innehall",
               type: "callout",
               text: "Föreläsningens innehåll",
@@ -377,7 +383,7 @@ describe("syncCohort", () => {
 
     const [session] = await syncedSources();
     expect(session.text).toContain("Block scope och function scope");
-    expect(session.text).not.toMatch(/zoom|Ansluta till föreläsningen/i);
+    expect(session.text).not.toMatch(/zoom|Ansluta till föreläsningen|väntrummet/i);
   });
 
   it("gives a Session outside any Course, such as an intro day, the Cohort's name as its Course", async () => {
