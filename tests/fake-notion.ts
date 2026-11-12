@@ -13,6 +13,8 @@ export type FakePage = {
   id: string;
   /** The page's last_edited_time; change it to simulate an edit between two syncs. */
   lastEdited?: string;
+  /** The end of date ranges, by property, e.g. a Course's Period. */
+  dateEnds?: NotionPage["dateEnds"];
   properties: NotionPage["properties"];
   children?: FakeBlock[];
 };
@@ -74,6 +76,7 @@ export function createFakeNotion(rootId: string, root: FakeBlock[], { pageSize =
           url: `https://notion.example/${p.id}`,
           lastEditedTime: p.lastEdited ?? "2026-09-01T08:00:00.000Z",
           properties: p.properties,
+          dateEnds: p.dateEnds ?? {},
         })),
         cursor,
       );

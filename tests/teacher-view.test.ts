@@ -116,7 +116,7 @@ describe("questionInsights", () => {
 describe("syncStatus", () => {
   const ROOT = "root-fjs26";
   const tree = (innehåll: string) => [
-    { id: "db-kurser", type: "child_database", text: "Översikt kurser", rows: [{ id: "course-fe", properties: { Kursnamn: "Frontend", Period: "2026-09-14" } }] },
+    { id: "db-kurser", type: "child_database", text: "Översikt kurser", rows: [{ id: "course-fe", properties: { Kursnamn: "Frontend", Period: "2026-09-14" }, dateEnds: { Period: "2099-12-31" } }] },
     {
       id: "db-schema",
       type: "child_database",

@@ -5,6 +5,7 @@ import { cohorts, sources, syncPages, syncRuns } from "@/db/schema";
 import { indexSource, type SourceInput } from "@/material";
 import type { NotionBlock, NotionPage, NotionReader, Paged } from "./notion";
 import { onlyTemplateText } from "./template";
+import { swedishToday } from "@/unlocking";
 
 type Deps = { db: NodePgDatabase; models: AiModels; notion: NotionReader };
 
@@ -143,6 +144,22 @@ async function run(
     if (id) listed.add(kind);
     else failures.push(`Databasen ${title} hittades inte`);
     rows[kind] = id ? await queryAll(notion, id) : [];
+  }
+
+  // The Cohort ends when its last Course does, so retention follows the schedule in Notion
+  // (ADR 0003). A Course with a single day for its Period ends that day.
+  const endsOn = rows.course
+    .flatMap((page) => page.dateEnds.Period ?? (text(page, "Period") || []))
+    .sort()
+    .at(-1);
+  if (endsOn && endsOn !== cohort.endsOn) {
+    // An end in the past would lock every Student out and get their data deleted, so a mistake
+    // in Notion must never do that: it is reported instead.
+    if (endsOn < swedishToday(now)) {
+      failures.push(`Den sista kursen slutar ${endsOn} enligt Notion, vilket har passerat. Klassens slutdatum ändrades inte.`);
+    } else {
+      await db.update(cohorts).set({ endsOn }).where(eq(cohorts.id, cohort.id));
+    }
   }
 
   const work = pageWork(notion, rows, cohort.name);

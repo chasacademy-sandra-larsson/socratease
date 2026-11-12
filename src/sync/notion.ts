@@ -16,6 +16,8 @@ export type NotionPage = {
   /** When anything on the page last changed, e.g. "2026-11-12T08:30:00.000Z". */
   lastEditedTime: string;
   properties: Record<string, string | IsoDate | string[] | null>;
+  /** The end of each date property that is a range, e.g. a Course's Period. */
+  dateEnds: Record<string, IsoDate>;
 };
 
 export type Paged<T> = { items: T[]; nextCursor: string | null };
@@ -46,7 +48,7 @@ type ApiProperty = {
   type: string;
   title?: RichText;
   rich_text?: RichText;
-  date?: { start: string } | null;
+  date?: { start: string; end: string | null } | null;
   relation?: { id: string }[];
   select?: { name: string } | null;
 };
@@ -129,6 +131,11 @@ export function createNotionReader(token: string): NotionReader {
           properties: Object.fromEntries(
             Object.entries(page.properties).map(([name, value]) => [name, propertyValue(value)]),
           ),
+          dateEnds: Object.fromEntries(
+            Object.entries(page.properties).flatMap(([name, value]) =>
+              value.type === "date" && value.date?.end ? [[name, value.date.end.slice(0, 10)]] : [],
+            ),
+          ),
         })),
         nextCursor: body.next_cursor,
       };
@@ -143,7 +150,8 @@ function propertyValue(property: ApiProperty): NotionPage["properties"][string] 
     case "rich_text":
       return plainText(property.rich_text);
     case "date":
-      return property.date?.start ?? null;
+      // A date with a time, e.g. "2026-09-15T09:00:00.000+02:00", is read as its day.
+      return property.date?.start.slice(0, 10) ?? null;
     case "relation":
       return (property.relation ?? []).map((r) => r.id);
     case "select":

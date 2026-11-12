@@ -7,7 +7,9 @@ import { listCohorts } from "@/access";
 import { startViewingAs } from "@/access/view-as-actions";
 import { requireViewer } from "@/access/viewer";
 import { db } from "@/db/client";
+import { RETENTION_DAYS, retentionDay } from "@/retention";
 import { questionInsights, syncStatus } from "@/teacher-view";
+import { formatSwedishDate } from "@/unlocking";
 import { SyncSection } from "./sync-section";
 
 export const metadata: Metadata = { title: "Lärarvy – SocratEase" };
@@ -43,6 +45,14 @@ async function Insights({ searchParams }: { searchParams: PageProps<"/larare">["
           </Link>
         ))}
       </nav>
+
+      <p className="text-sm text-zinc-500">
+        {cohort.endsOn
+          ? `Klassen slutar ${formatSwedishDate(cohort.endsOn)}. Frågeloggen och klasslistan raderas när ${RETENTION_DAYS} dagar har gått, natten till ${formatSwedishDate(retentionDay(cohort.endsOn))}.`
+          : cohort.fromNotion
+            ? "Klassen har inget slutdatum än, så inget raderas. Synken sätter det från slutet på den sista kursens Period i Notion."
+            : "Klassen synkas inte från Notion och har inget slutdatum, så dess frågelogg och klasslista raderas inte automatiskt."}
+      </p>
 
       <form action={startViewingAs}>
         <input type="hidden" name="cohortId" value={cohort.id} />
