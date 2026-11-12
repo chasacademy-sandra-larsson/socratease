@@ -746,10 +746,30 @@ describe("syncCohort, run after run", () => {
   });
 
   it("lets only one of two runs started at the same time through", async () => {
-    const t = tree(session("2026-09-01T08:00:00.000Z", "HTML"));
-    const reports = await Promise.all([sync(t), sync(t)]);
+    // The first run pauses while it holds the lock, so the two are sure to overlap.
+    const notion = createFakeNotion(ROOT, tree(session("2026-09-01T08:00:00.000Z", "HTML"))).reader;
+    let reached!: () => void;
+    let release!: () => void;
+    const inside = new Promise<void>((resolve) => (reached = resolve));
+    const paused = new Promise<void>((resolve) => (release = resolve));
+    const pausing = {
+      ...notion,
+      listChildren: async (id: string, cursor?: string) => {
+        if (id === ROOT) {
+          reached();
+          await paused;
+        }
+        return notion.listChildren(id, cursor);
+      },
+    };
 
-    expect(reports.map((r) => r.status).sort()).toEqual(["completed", "locked"]);
+    const first = syncCohort({ db, models, notion: pausing }, cohortId);
+    await inside;
+    const second = await syncCohort({ db, models, notion }, cohortId);
+    release();
+
+    expect(second.status).toBe("locked");
+    expect((await first).status).toBe("completed");
   });
 
   it("writes every run to the sync log", async () => {
