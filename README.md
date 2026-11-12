@@ -75,7 +75,9 @@ Real Course material is only ever sent to `vertex`, so the command refuses any o
 
 **When to run it.** Sync reads everything that is filled in, including Sessions weeks ahead. Each Source is stored with its unlock date, and every question checks that date against today, so Upcoming material unlocks by itself on its day. Run Sync again only after changing something in Notion: filling in new Sessions, editing a Session, Study Material, an Assignment or a Course Goal, or moving a date.
 
-Until #11, Sync is a full run on demand: material deleted in Notion stays in SocratEase, and every Source is embedded again on each run.
+Sync is incremental (ADR 0005): it reads only pages edited since the last run, and removes the Sources of pages and sections deleted in Notion. A run reads at most 25 pages, so the first sync of a Cohort takes several runs; `pnpm sync` keeps going until everything is in sync, and a run with nothing changed takes a few seconds. Every run is written to the sync log (`sync_runs`), with what failed and which Sessions are not filled in.
+
+On Vercel, a cron job calls `/api/sync` once a day at 02:00 UTC. It syncs every Cohort with a root page, and needs `CRON_SECRET`, `NOTION_TOKEN`, `AI_PROVIDER=vertex` and access to Vertex AI in the project's environment. Without them it answers 401 or 503 and syncs nothing.
 
 ## Production
 

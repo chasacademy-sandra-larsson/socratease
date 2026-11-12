@@ -64,6 +64,20 @@
       "when": 1794477830646,
       "tag": "0008_assignment-deadline",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794485827178,
+      "tag": "0009_incremental-sync",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794486549042,
+      "tag": "0010_sync-page-failures",
+      "breakpoints": true
     }
   ]
 }

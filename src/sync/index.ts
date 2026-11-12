@@ -1,7 +1,7 @@
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, or } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { AiModels } from "@/ai/models";
-import { cohorts } from "@/db/schema";
+import { cohorts, sources, syncPages, syncRuns } from "@/db/schema";
 import { indexSource, type SourceInput } from "@/material";
 import type { NotionBlock, NotionPage, NotionReader, Paged } from "./notion";
 import { onlyTemplateText } from "./template";
@@ -10,68 +10,303 @@ type Deps = { db: NodePgDatabase; models: AiModels; notion: NotionReader };
 
 /** The FJS26 databases Sync reads, by title. Any other database, e.g. a linked view, is skipped. */
 const DATABASES = {
-  courses: "Översikt kurser",
-  sessions: "Schema",
-  assignments: "Examinationsmoment",
-  courseGoals: "Kursmål och Betygskriterier",
+  course: "Översikt kurser",
+  session: "Schema",
+  assignment: "Examinationsmoment",
+  "course-goal": "Kursmål och Betygskriterier",
 } as const;
 
+type PageKind = keyof typeof DATABASES;
 type Course = { name: string; startsOn: string };
 
 // A line with a meeting link is about joining a Session, not Course material, so it is never indexed.
 const MEETING_LINK = /zoom\.us\//i;
 
+/** Pages read per run, so a run stays well inside a function's time limit (ADR 0005). */
+const MAX_PAGES_PER_RUN = 25;
+/** How long a run holds the lock. A run that crashes releases it when this runs out. */
+const LOCK_MS = 15 * 60 * 1000;
+/**
+ * Notion rounds last_edited_time to the minute, so a page edited this recently may change again
+ * without its time changing. Such a page is read again on the next run.
+ */
+const SETTLE_MS = 2 * 60 * 1000;
+
 export type SyncReport = {
-  /** How many Sources were indexed. */
-  sources: number;
+  /**
+   * "continues": pages are left for the next run. "failed": something went wrong and no page was
+   * synced, or no page is left but failures were. "locked": another run was in progress.
+   */
+  status: "completed" | "continues" | "locked" | "failed";
+  /** Notion pages read and indexed in this run. */
+  pagesSynced: number;
+  /** Changed pages left for the next run. */
+  pagesRemaining: number;
+  /** Sources removed because their page or section is gone from Notion. */
+  sourcesRemoved: number;
+  /** What went wrong, e.g. "Föreläsning 2026-09-15: Notion 502 …"; those pages are tried again. */
+  failures: string[];
   /** Sessions with nothing but template text, e.g. "Föreläsning 2027-01-12 (Frontendutveckling)". */
   notFilledIn: string[];
   /** Material that can't be dated or placed in a Course yet, e.g. "u09 - Ny uppgift saknar Kurs". */
   skipped: string[];
 };
 
+/** What one Notion page becomes: its Sources, or a note on why it has none. */
+type PageResult = { inputs: SourceInput[]; note?: { kind: "not-filled-in" | "skipped"; label: string } };
+
+/** A page in the Cohort's databases, with what its Sources depend on and how to make them. */
+type PageWork = {
+  pageId: string;
+  kind: PageKind;
+  version: string;
+  editedAt: string;
+  label: string;
+  read: () => Promise<PageResult>;
+};
+
 /**
  * Reads a Cohort's Course material from Notion, starting at its root page, and indexes it as
  * Sources and Chunks. It never searches and never follows links: it only walks down (ADR 0007).
+ *
+ * Each run is incremental and bounded (ADR 0005): it lists the pages in the Cohort's databases,
+ * reads only those that changed since they were last synced, at most `maxPages` of them, and
+ * removes the Sources of pages and sections that are gone. Each page is saved as it is done, so
+ * a run that stops part-way resumes where it was. A lock keeps two runs apart, and every run is
+ * written to the sync log.
  */
-export async function syncCohort({ db, models, notion }: Deps, cohortId: string): Promise<SyncReport> {
+export async function syncCohort(
+  { db, models, notion }: Deps,
+  cohortId: string,
+  { maxPages = MAX_PAGES_PER_RUN, now = new Date() }: { maxPages?: number; now?: Date } = {},
+): Promise<SyncReport> {
   const [cohort] = await db.select().from(cohorts).where(eq(cohorts.id, cohortId));
   if (!cohort?.notionRootPageId) throw new Error("The Cohort has no Notion root page");
 
-  const databases = await findDatabases(notion, cohort.notionRootPageId);
-  const inputs: SourceInput[] = [];
-  const skipped: string[] = [];
-  // Material in a Course is unlocked from the Course's start, so it needs a Course with a Period.
-  const courses = new Map<string, Course>();
-  for (const page of await queryAll(notion, databases.get(DATABASES.courses))) {
-    const course = { name: text(page, "Kursnamn"), startsOn: text(page, "Period") };
-    courses.set(page.id, course);
-    if (course.startsOn) inputs.push(...(await studyMaterialSources(notion, page, course)));
-    else skipped.push(`Kursen ${course.name} saknar Period`);
+  const lease = new Date(now.getTime() + LOCK_MS);
+  const [locked] = await db
+    .update(cohorts)
+    .set({ syncLockedUntil: lease })
+    .where(and(eq(cohorts.id, cohortId), or(isNull(cohorts.syncLockedUntil), lt(cohorts.syncLockedUntil, now))))
+    .returning({ id: cohorts.id });
+  if (!locked) {
+    return logRun(db, cohortId, now, { ...emptyReport(), status: "locked" });
   }
-  const datedCourse = (page: NotionPage, title: string) => {
-    const course = courses.get(relation(page, "Kurs")[0]);
-    if (!course) skipped.push(`${title} saknar Kurs`);
-    return course?.startsOn ? course : null;
+
+  try {
+    return await logRun(db, cohortId, now, await run(db, models, notion, cohort, maxPages, now));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return logRun(db, cohortId, now, { ...emptyReport(), status: "failed", failures: [message] });
+  } finally {
+    // Only release this run's own lease: if it ran out, another run may hold the lock now.
+    await db
+      .update(cohorts)
+      .set({ syncLockedUntil: null })
+      .where(and(eq(cohorts.id, cohortId), eq(cohorts.syncLockedUntil, lease)));
+  }
+}
+
+async function run(
+  db: NodePgDatabase,
+  models: AiModels,
+  notion: NotionReader,
+  cohort: typeof cohorts.$inferSelect,
+  maxPages: number,
+  now: Date,
+): Promise<SyncReport> {
+  const failures: string[] = [];
+  const databases = await findDatabases(notion, cohort.notionRootPageId!);
+  // A database that can't be found, e.g. after a rename, must not read as "all its pages deleted".
+  const listed = new Set<PageKind>();
+  const rows = {} as Record<PageKind, NotionPage[]>;
+  for (const [kind, title] of Object.entries(DATABASES) as [PageKind, string][]) {
+    const id = databases.get(title);
+    if (id) listed.add(kind);
+    else failures.push(`Databasen ${title} hittades inte`);
+    rows[kind] = id ? await queryAll(notion, id) : [];
+  }
+
+  const work = pageWork(notion, rows, cohort.name);
+  const stored = new Map(
+    (await db.select().from(syncPages).where(eq(syncPages.cohortId, cohort.id))).map((p) => [p.pageId, p]),
+  );
+
+  // Pages gone from a database that was listed in full: their Sources go too.
+  const present = new Set(work.map((w) => w.pageId));
+  const gone = [...stored.values()].filter((p) => listed.has(p.kind) && !present.has(p.pageId));
+  let sourcesRemoved = await removeSources(db, cohort.id, gone.flatMap((p) => p.sourceIds));
+  if (gone.length > 0) {
+    await db.delete(syncPages).where(
+      and(
+        eq(syncPages.cohortId, cohort.id),
+        inArray(
+          syncPages.pageId,
+          gone.map((p) => p.pageId),
+        ),
+      ),
+    );
+  }
+
+  // Pages that failed before wait behind the others, oldest failure first, so they can't block a run.
+  const lastFailed = (w: PageWork) => stored.get(w.pageId)?.failedAt?.getTime() ?? 0;
+  const changed = work
+    .filter((w) => stored.get(w.pageId)?.version !== w.version)
+    .sort((a, b) => lastFailed(a) - lastFailed(b));
+  const notes = new Map(
+    [...stored.values()].flatMap((p) => (p.note && p.label ? [[p.pageId, { kind: p.note, label: p.label }]] : [])),
+  );
+  let pagesSynced = 0;
+  for (const page of changed.slice(0, maxPages)) {
+    try {
+      const result = await page.read();
+      for (const input of result.inputs) await indexSource(db, models, cohort.id, input);
+      // Sections that were on the page last time but aren't now, e.g. a deleted toggle.
+      const sourceIds = result.inputs.map((i) => i.externalId);
+      const dropped = (stored.get(page.pageId)?.sourceIds ?? []).filter((id) => !sourceIds.includes(id));
+      sourcesRemoved += await removeSources(db, cohort.id, dropped);
+      const settled = now.getTime() - new Date(page.editedAt).getTime() > SETTLE_MS;
+      const state = {
+        kind: page.kind,
+        version: settled ? page.version : `${page.version}|unsettled`,
+        sourceIds,
+        note: result.note?.kind ?? null,
+        label: result.note?.label ?? null,
+        failedAt: null,
+      };
+      await db
+        .insert(syncPages)
+        .values({ cohortId: cohort.id, pageId: page.pageId, ...state })
+        .onConflictDoUpdate({ target: [syncPages.cohortId, syncPages.pageId], set: state });
+      if (result.note) notes.set(page.pageId, result.note);
+      else notes.delete(page.pageId);
+      pagesSynced++;
+    } catch (error) {
+      failures.push(`${page.label}: ${error instanceof Error ? error.message : String(error)}`);
+      // Keep its old version, so it is still read again, but behind pages that haven't failed.
+      await db
+        .insert(syncPages)
+        .values({ cohortId: cohort.id, pageId: page.pageId, kind: page.kind, version: "", sourceIds: [], failedAt: now })
+        .onConflictDoUpdate({ target: [syncPages.cohortId, syncPages.pageId], set: { failedAt: now } });
+    }
+  }
+
+  const pagesRemaining = Math.max(changed.length - maxPages, 0);
+  // Notes from the pages listed this run, and from pages of a database that wasn't found.
+  const notedPages = [
+    ...work.map((w) => w.pageId),
+    ...[...stored.values()].filter((p) => !listed.has(p.kind)).map((p) => p.pageId),
+  ];
+  const noted = (kind: "not-filled-in" | "skipped") =>
+    notedPages.flatMap((id) => (notes.get(id)?.kind === kind ? [notes.get(id)!.label] : []));
+  return {
+    // A run with failures and no progress stops here, so a page that keeps failing can't loop forever.
+    status:
+      failures.length > 0 && pagesSynced === 0
+        ? "failed"
+        : pagesRemaining > 0
+          ? "continues"
+          : failures.length > 0
+            ? "failed"
+            : "completed",
+    pagesSynced,
+    pagesRemaining,
+    sourcesRemoved,
+    failures,
+    notFilledIn: noted("not-filled-in").sort(byDate),
+    skipped: noted("skipped"),
+  };
+}
+
+/**
+ * Every page in the Cohort's databases, Courses first. A page's version is its last_edited_time
+ * plus its Course's name and start, since its Sources carry those too: moving a Course re-reads it.
+ */
+function pageWork(notion: NotionReader, rows: Record<PageKind, NotionPage[]>, cohortName: string): PageWork[] {
+  const courses = new Map(
+    rows.course.map((page): [string, Course] => [page.id, { name: text(page, "Kursnamn"), startsOn: text(page, "Period") }]),
+  );
+  const courseOf = (page: NotionPage) => courses.get(relation(page, "Kurs")[0]);
+  // A Session outside any Course carries the Cohort's name instead.
+  const version = (page: NotionPage, course: Course | undefined) =>
+    [page.lastEditedTime, course?.name ?? cohortName, course?.startsOn ?? ""].join("|");
+  // Material in a Course is unlocked from the Course's start, so it needs a Course with a Period.
+  const inDatedCourse = async (
+    page: NotionPage,
+    title: string,
+    make: (course: Course) => Promise<SourceInput[]>,
+  ): Promise<PageResult> => {
+    const course = courseOf(page);
+    if (!course) return { inputs: [], note: { kind: "skipped", label: `${title} saknar Kurs` } };
+    return { inputs: course.startsOn ? await make(course) : [] };
   };
 
-  const notFilledIn: string[] = [];
-  for (const page of await queryAll(notion, databases.get(DATABASES.sessions))) {
-    const session = await sessionSource(notion, page, courses, cohort.name);
-    if (!session) notFilledIn.push(sessionLabel(page, courses));
-    else if (!session.sessionDate) skipped.push(`${session.title} (${text(page, "Aktivitet")}, ${session.courseName}) saknar Datum`);
-    else inputs.push(session);
-  }
-  for (const page of await queryAll(notion, databases.get(DATABASES.assignments))) {
-    const course = datedCourse(page, text(page, "Uppgift"));
-    if (course) inputs.push(...(await assignmentSources(notion, page, course)));
-  }
-  for (const page of await queryAll(notion, databases.get(DATABASES.courseGoals))) {
-    const course = datedCourse(page, text(page, "Mål"));
-    if (course) inputs.push(courseGoalSource(page, course));
-  }
-  for (const input of inputs) await indexSource(db, models, cohortId, input);
-  return { sources: inputs.length, notFilledIn: notFilledIn.sort(byDate), skipped };
+  return [
+    ...rows.course.map((page): PageWork => {
+      const course = courses.get(page.id)!;
+      return {
+        pageId: page.id,
+        editedAt: page.lastEditedTime,
+        kind: "course",
+        version: version(page, course),
+        label: `Kursen ${course.name}`,
+        read: async () =>
+          course.startsOn
+            ? { inputs: await studyMaterialSources(notion, page, course) }
+            : { inputs: [], note: { kind: "skipped", label: `Kursen ${course.name} saknar Period` } },
+      };
+    }),
+    ...rows.session.map((page): PageWork => ({
+      pageId: page.id,
+      editedAt: page.lastEditedTime,
+      kind: "session",
+      version: version(page, courseOf(page)),
+      label: sessionLabel(page, courses),
+      read: async () => {
+        const session = await sessionSource(notion, page, courses, cohortName);
+        if (!session) return { inputs: [], note: { kind: "not-filled-in", label: sessionLabel(page, courses) } };
+        if (!session.sessionDate) {
+          const label = `${session.title} (${text(page, "Aktivitet")}, ${session.courseName}) saknar Datum`;
+          return { inputs: [], note: { kind: "skipped", label } };
+        }
+        return { inputs: [session] };
+      },
+    })),
+    ...rows.assignment.map((page): PageWork => ({
+      pageId: page.id,
+      editedAt: page.lastEditedTime,
+      kind: "assignment",
+      version: version(page, courseOf(page)),
+      label: text(page, "Uppgift"),
+      read: () => inDatedCourse(page, text(page, "Uppgift"), (course) => assignmentSources(notion, page, course)),
+    })),
+    ...rows["course-goal"].map((page): PageWork => ({
+      pageId: page.id,
+      editedAt: page.lastEditedTime,
+      kind: "course-goal",
+      version: version(page, courseOf(page)),
+      label: text(page, "Mål"),
+      read: () => inDatedCourse(page, text(page, "Mål"), async (course) => [courseGoalSource(page, course)]),
+    })),
+  ];
+}
+
+async function removeSources(db: NodePgDatabase, cohortId: string, externalIds: string[]): Promise<number> {
+  if (externalIds.length === 0) return 0;
+  const removed = await db
+    .delete(sources)
+    .where(and(eq(sources.cohortId, cohortId), inArray(sources.externalId, externalIds)))
+    .returning({ id: sources.id });
+  return removed.length;
+}
+
+async function logRun(db: NodePgDatabase, cohortId: string, startedAt: Date, report: SyncReport): Promise<SyncReport> {
+  await db.insert(syncRuns).values({ cohortId, startedAt, ...report });
+  return report;
+}
+
+function emptyReport(): SyncReport {
+  return { status: "completed", pagesSynced: 0, pagesRemaining: 0, sourcesRemoved: 0, failures: [], notFilledIn: [], skipped: [] };
 }
 
 /**

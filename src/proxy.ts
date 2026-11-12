@@ -3,7 +3,8 @@ import { NextResponse, type NextRequest } from "next/server";
 // Optimistic gate: every route needs a session cookie unless it is listed here
 // (the cookie may be split into .0, .1 … chunks).
 // The real check (valid session, still on the Roster) is requireViewer() in each page.
-const PUBLIC_PATHS = ["/login", "/no-access", "/integritet", "/api/auth", "/status"];
+// /api/sync checks the cron secret itself.
+const PUBLIC_PATHS = ["/login", "/no-access", "/integritet", "/api/auth", "/status", "/api/sync"];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;

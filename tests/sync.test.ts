@@ -4,7 +4,7 @@ import { sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createFakeModels } from "../src/ai/fake";
 import { createPool } from "../src/db/pool";
-import { chunks, cohorts, sources } from "../src/db/schema";
+import { chunks, cohorts, sources, syncRuns } from "../src/db/schema";
 import { syncCohort } from "../src/sync";
 import { createFakeNotion, type FakeBlock } from "./fake-notion";
 
@@ -567,5 +567,203 @@ describe("syncCohort", () => {
     expect(listText).toContain("Begrepp nummer 0");
     expect(listText).toContain("Begrepp nummer 149");
     expect(synced.filter((s) => s.title.startsWith("Pass"))).toHaveLength(3);
+  });
+});
+
+describe("syncCohort, run after run", () => {
+  const session = (lastEdited: string, topic: string) => ({
+    id: "session-a",
+    lastEdited,
+    properties: { Aktivitet: "Föreläsning", Innehåll: `• ${topic}`, Datum: "2026-09-15", Kurs: ["course-fe"] },
+  });
+  const tree = (...sessions: ReturnType<typeof session>[]) => [
+    database("db-kurser", "Översikt kurser", [course]),
+    database("db-schema", "Schema", sessions),
+    database("db-exam", "Examinationsmoment", []),
+    database("db-mal", "Kursmål och Betygskriterier", []),
+  ];
+
+  it("reads no page again when nothing has changed since the last run", async () => {
+    await syncCohort({ db, models, notion: createFakeNotion(ROOT, tree(session("2026-09-01T08:00:00.000Z", "HTML"))).reader }, cohortId);
+
+    const second = createFakeNotion(ROOT, tree(session("2026-09-01T08:00:00.000Z", "HTML")));
+    const report = await syncCohort({ db, models, notion: second.reader }, cohortId);
+
+    expect(second.requested).not.toContain("session-a");
+    expect(second.requested).not.toContain("course-fe");
+    expect(report.pagesSynced).toBe(0);
+    expect((await syncedSources()).map((s) => s.title)).toEqual(["HTML"]);
+  });
+
+  const sync = (tree: FakeBlock[], options?: Parameters<typeof syncCohort>[2]) =>
+    syncCohort({ db, models, notion: createFakeNotion(ROOT, tree).reader }, cohortId, options);
+
+  it("reads a page again once it has been edited, replacing its old text", async () => {
+    await sync(tree(session("2026-09-01T08:00:00.000Z", "HTML")));
+    const report = await sync(tree(session("2026-09-02T10:00:00.000Z", "CSS")));
+
+    expect(report.pagesSynced).toBe(1);
+    expect((await syncedSources()).map((s) => s.title)).toEqual(["CSS"]);
+  });
+
+  it("removes the Sources of a page deleted in Notion", async () => {
+    await sync(tree(session("2026-09-01T08:00:00.000Z", "HTML")));
+    const report = await sync(tree());
+
+    expect(await syncedSources()).toEqual([]);
+    expect(report.sourcesRemoved).toBe(1);
+  });
+
+  it("removes the Source of a section deleted from a page that is still there", async () => {
+    const coursePage = (lastEdited: string, toggles: string[]) => ({
+      ...course,
+      lastEdited,
+      children: [
+        { id: "h2-instudering", type: "heading_2", text: "Instudering" },
+        ...toggles.map((t) => ({ id: `toggle-${t}`, type: "toggle", text: t, children: [{ id: `p-${t}`, type: "paragraph", text: `Om ${t}.` }] })),
+      ],
+    });
+    await sync([database("db-kurser", "Översikt kurser", [coursePage("2026-09-01T08:00:00.000Z", ["HTML", "CSS"])])]);
+    const report = await sync([database("db-kurser", "Översikt kurser", [coursePage("2026-09-02T08:00:00.000Z", ["HTML"])])]);
+
+    expect(report.sourcesRemoved).toBe(1);
+
+    expect((await syncedSources()).map((s) => s.title)).toEqual(["HTML"]);
+  });
+
+  it("reads a Course's Assignments again when its Period moves, with the new unlock date", async () => {
+    const assignment = {
+      id: "exam-u01",
+      properties: { Uppgift: "u01 - Webbsida", Kurs: ["course-fe"] },
+      children: [{ id: "h2-om", type: "heading_2", text: "Om uppgiften" }],
+    };
+    const withPeriod = (period: string) => [
+      database("db-kurser", "Översikt kurser", [{ ...course, properties: { ...course.properties, Period: period } }]),
+      database("db-exam", "Examinationsmoment", [assignment]),
+    ];
+    await sync(withPeriod("2026-09-14"));
+    await sync(withPeriod("2026-09-21"));
+
+    expect((await syncedSources()).map((s) => s.unlocksOn)).toEqual(["2026-09-21"]);
+  });
+
+  it("removes nothing when a database can't be found, e.g. after a rename, and says so", async () => {
+    const empty = { ...session("2026-09-01T08:00:00.000Z", "x"), id: "session-empty" };
+    empty.properties = { ...empty.properties, Innehåll: "" };
+    await sync(tree(session("2026-09-01T08:00:00.000Z", "HTML"), empty));
+    const report = await sync([database("db-kurser", "Översikt kurser", [course])]);
+
+    expect((await syncedSources()).map((s) => s.title)).toEqual(["HTML"]);
+    expect(report.failures).toContain("Databasen Schema hittades inte");
+    expect(report.notFilledIn).toEqual(["Föreläsning 2026-09-15 (Frontendutveckling)"]);
+  });
+
+  it("reads a bounded number of pages per run and continues where it stopped", async () => {
+    const sessions = ["HTML", "CSS", "JS"].map((topic, i) => ({
+      ...session("2026-09-01T08:00:00.000Z", topic),
+      id: `session-${i}`,
+    }));
+
+    const first = await sync(tree(...sessions), { maxPages: 2 });
+    expect(first).toMatchObject({ status: "continues", pagesSynced: 2, pagesRemaining: 2 });
+    const second = await sync(tree(...sessions), { maxPages: 2 });
+    expect(second).toMatchObject({ status: "completed", pagesSynced: 2, pagesRemaining: 0 });
+
+    expect((await syncedSources()).map((s) => s.title)).toEqual(["CSS", "HTML", "JS"]);
+  });
+
+  it("logs a page that fails, keeps the others, and tries it again next run", async () => {
+    const broken = { ...session("2026-09-01T08:00:00.000Z", "HTML"), id: "session-broken" };
+    const fine = { ...session("2026-09-01T08:00:00.000Z", "CSS"), id: "session-fine" };
+    const notion = createFakeNotion(ROOT, tree(broken, fine)).reader;
+    const failing = {
+      ...notion,
+      listChildren: (id: string, cursor?: string) =>
+        id === "session-broken" ? Promise.reject(new Error("Notion 502")) : notion.listChildren(id, cursor),
+    };
+
+    const first = await syncCohort({ db, models, notion: failing }, cohortId);
+    expect(first.status).toBe("failed");
+    expect(first.failures).toEqual(["Föreläsning 2026-09-15 (Frontendutveckling): Notion 502"]);
+    expect((await syncedSources()).map((s) => s.title)).toEqual(["CSS"]);
+
+    const second = await sync(tree(broken, fine));
+    expect(second.pagesSynced).toBe(1);
+    expect((await syncedSources()).map((s) => s.title)).toEqual(["CSS", "HTML"]);
+  });
+
+  it("doesn't let a page that keeps failing block the pages after it", async () => {
+    const broken = { ...session("2026-09-01T08:00:00.000Z", "HTML"), id: "session-broken" };
+    const fine = { ...session("2026-09-01T08:00:00.000Z", "CSS"), id: "session-fine" };
+    const notion = createFakeNotion(ROOT, tree(broken, fine)).reader;
+    const failing = {
+      ...notion,
+      listChildren: (id: string, cursor?: string) =>
+        id === "session-broken" ? Promise.reject(new Error("Notion 502")) : notion.listChildren(id, cursor),
+    };
+
+    // One page per run: the course page, the broken Session, the fine one, the broken one again.
+    const statuses = [];
+    for (let run = 0; run < 4; run++) {
+      statuses.push((await syncCohort({ db, models, notion: failing }, cohortId, { maxPages: 1 })).status);
+    }
+
+    expect((await syncedSources()).map((s) => s.title)).toEqual(["CSS"]);
+    // A run that only failed stops the loop in `pnpm sync` instead of saying "continues".
+    expect(statuses).toEqual(["continues", "failed", "continues", "failed"]);
+  });
+
+  it("reads a page again if it was edited in the same minute as the last run read it", async () => {
+    // Notion's last_edited_time is rounded to the minute, so an edit seconds after a read keeps it.
+    const now = new Date("2026-11-12T08:30:40Z");
+    await sync(tree(session("2026-11-12T08:30:00.000Z", "HTML")), { now });
+
+    const report = await sync(tree(session("2026-11-12T08:30:00.000Z", "CSS")), {
+      now: new Date("2026-11-12T09:00:00Z"),
+    });
+
+    expect(report.pagesSynced).toBe(1);
+    expect((await syncedSources()).map((s) => s.title)).toEqual(["CSS"]);
+  });
+
+  it("skips a run while another one holds the lock, and logs it", async () => {
+    const now = new Date("2026-11-12T03:00:00Z");
+    await db.update(cohorts).set({ syncLockedUntil: new Date("2026-11-12T03:10:00Z") });
+
+    const report = await sync(tree(session("2026-09-01T08:00:00.000Z", "HTML")), { now });
+
+    expect(report.status).toBe("locked");
+    expect(await syncedSources()).toEqual([]);
+  });
+
+  it("takes over a lock left by a run that crashed", async () => {
+    const now = new Date("2026-11-12T03:00:00Z");
+    await db.update(cohorts).set({ syncLockedUntil: new Date("2026-11-12T02:00:00Z") });
+
+    const report = await sync(tree(session("2026-09-01T08:00:00.000Z", "HTML")), { now });
+
+    expect(report.status).toBe("completed");
+  });
+
+  it("lets only one of two runs started at the same time through", async () => {
+    const t = tree(session("2026-09-01T08:00:00.000Z", "HTML"));
+    const reports = await Promise.all([sync(t), sync(t)]);
+
+    expect(reports.map((r) => r.status).sort()).toEqual(["completed", "locked"]);
+  });
+
+  it("writes every run to the sync log", async () => {
+    const template = { ...session("2026-09-01T08:00:00.000Z", "x"), id: "session-empty" };
+    template.properties = { ...template.properties, Innehåll: "" };
+    await sync(tree(session("2026-09-01T08:00:00.000Z", "HTML"), template));
+
+    const [entry] = await db.select().from(syncRuns).where(eq(syncRuns.cohortId, cohortId));
+    expect(entry).toMatchObject({
+      status: "completed",
+      pagesSynced: 3,
+      pagesRemaining: 0,
+      failures: [],
+      notFilledIn: ["Föreläsning 2026-09-15 (Frontendutveckling)"],
+    });
   });
 });

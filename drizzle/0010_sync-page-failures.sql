@@ -1,0 +1,1 @@
+ALTER TABLE "sync_pages" ADD COLUMN "failed_at" timestamp with time zone;

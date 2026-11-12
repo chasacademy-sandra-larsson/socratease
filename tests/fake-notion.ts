@@ -11,6 +11,8 @@ export type FakeBlock = {
 
 export type FakePage = {
   id: string;
+  /** The page's last_edited_time; change it to simulate an edit between two syncs. */
+  lastEdited?: string;
   properties: NotionPage["properties"];
   children?: FakeBlock[];
 };
@@ -67,7 +69,12 @@ export function createFakeNotion(rootId: string, root: FakeBlock[], { pageSize =
       const pages = rows.get(databaseId);
       if (!pages) throw new Error(`Not shared with the integration: ${databaseId}`);
       return page<NotionPage>(
-        pages.map((p) => ({ id: p.id, url: `https://notion.example/${p.id}`, properties: p.properties })),
+        pages.map((p) => ({
+          id: p.id,
+          url: `https://notion.example/${p.id}`,
+          lastEditedTime: p.lastEdited ?? "2026-09-01T08:00:00.000Z",
+          properties: p.properties,
+        })),
         cursor,
       );
     },
