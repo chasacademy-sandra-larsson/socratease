@@ -149,3 +149,12 @@ export const syncRuns = pgTable(
   },
   (t) => [index("sync_runs_cohort_idx").on(t.cohortId, t.startedAt)],
 );
+
+// Each Student's message count for the current day only (ADR 0003). The row is overwritten when
+// a new day starts, so there is no history. Kept apart from the Question Log, and keyed on a
+// one-way key derived from the Student's address, never the address itself.
+export const dailyUsage = pgTable("daily_usage", {
+  studentKey: text("student_key").primaryKey(),
+  day: date("day").notNull(),
+  count: integer("count").notNull(),
+});

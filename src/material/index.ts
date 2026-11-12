@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, gte, min } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { embeddingModelId, embedTexts } from "@/ai/embed";
 import type { AiModels } from "@/ai/models";
@@ -115,4 +115,13 @@ export async function indexSource(
       );
     }
   });
+}
+
+/** The date of the Cohort's next Session on or after `from`; one later the same day counts. */
+export async function nextSession(db: NodePgDatabase, cohortId: string, from: IsoDate): Promise<IsoDate | null> {
+  const [next] = await db
+    .select({ date: min(sources.unlocksOn) })
+    .from(sources)
+    .where(and(eq(sources.cohortId, cohortId), eq(sources.kind, "session"), gte(sources.unlocksOn, from)));
+  return next?.date ?? null;
 }

@@ -1,6 +1,6 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
-import { resolveAccess, type GoogleIdentity, type Viewer } from "@/access";
+import { resolveAccess, usageKeyFor, type GoogleIdentity, type Viewer } from "@/access";
 import { db } from "@/db/client";
 
 declare module "next-auth" {
@@ -28,11 +28,22 @@ function identityFrom(profile: Record<string, unknown> | undefined): GoogleIdent
   };
 }
 
-function viewerFrom(decision: Awaited<ReturnType<typeof resolveAccess>>): Viewer | null {
+/**
+ * The secret behind Students' usage keys. A separate one means rotating the session secret
+ * doesn't reset every daily count; the session secret is only the fallback.
+ */
+function usageKeySecret(): string {
+  const secret = process.env.USAGE_KEY_SECRET || process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
+  if (!secret) throw new Error("USAGE_KEY_SECRET (or AUTH_SECRET) must be set");
+  return secret;
+}
+
+function viewerFrom(decision: Awaited<ReturnType<typeof resolveAccess>>, identity: GoogleIdentity): Viewer | null {
   if (!decision.granted) return null;
-  return decision.role === "teacher"
-    ? { role: "teacher" }
-    : { role: "student", cohortId: decision.cohortId, cohortName: decision.cohortName };
+  if (decision.role === "teacher") return { role: "teacher" };
+  // The daily usage counter is keyed on this, never on the address itself (ADR 0003).
+  const usageKey = usageKeyFor(identity.email, usageKeySecret());
+  return { role: "student", cohortId: decision.cohortId, cohortName: decision.cohortName, usageKey };
 }
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
@@ -56,9 +67,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
       // On sign-in and every few minutes after: removing someone from the Roster,
       // or a Cohort ending, logs them out without waiting for the session to expire.
-      const viewer = viewerFrom(
-        await resolveAccess(db, identity, { teacherEmail: teacherEmail() }),
-      );
+      const viewer = viewerFrom(await resolveAccess(db, identity, { teacherEmail: teacherEmail() }), identity);
       if (!viewer) return null;
       return { sub: token.sub, identity, viewer, checkedAt: Date.now() };
     },

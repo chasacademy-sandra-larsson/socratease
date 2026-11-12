@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { cohorts, rosterEntries } from "@/db/schema";
@@ -8,11 +9,12 @@ const TEACHER_DOMAIN = "chasacademy.se";
 type Db = NodePgDatabase;
 
 /**
- * Who is using SocratEase. Carries no name or email (ADR 0003). A Student with
- * `viewingAsTeacher` is the Teacher trying SocratEase as a Student of that Cohort.
+ * Who is using SocratEase. Carries no name or email (ADR 0003). A real Student has a `usageKey`
+ * for the daily limit; a Student with `viewingAsTeacher` is the Teacher trying SocratEase as a
+ * Student of that Cohort, and has none.
  */
 export type Viewer =
-  | { role: "student"; cohortId: string; cohortName: string; viewingAsTeacher?: true }
+  | { role: "student"; cohortId: string; cohortName: string; usageKey?: string; viewingAsTeacher?: true }
   | { role: "teacher" };
 
 export type DeniedReason = "unverified-email" | "wrong-domain" | "not-on-roster" | "cohort-ended";
@@ -73,6 +75,14 @@ export async function viewAs(
   // An ended Cohort has no Students who can get in, so there is nothing to view as.
   if (!cohort || (cohort.endsOn && cohort.endsOn < today.toISOString().slice(0, 10))) return viewer;
   return { role: "student", cohortId, cohortName: cohort.name, viewingAsTeacher: true };
+}
+
+/**
+ * The key a Student's daily usage is counted under: a keyed hash of their address, so the
+ * counter never holds the address and the key can't be recomputed without the app's secret.
+ */
+export function usageKeyFor(email: string, secret: string): string {
+  return createHmac("sha256", secret).update(normalise(email)).digest("hex");
 }
 
 /**

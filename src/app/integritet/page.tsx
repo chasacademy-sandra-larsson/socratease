@@ -36,6 +36,14 @@ export default function PrivacyPage() {
         fliken är öppen.
       </p>
 
+      <h2 className="mt-4 text-xl font-semibold">Daglig gräns</h2>
+      <p>
+        Du kan ställa ett begränsat antal frågor per dag. För att hålla räkningen sparas hur många
+        frågor du har ställt i dag, under en kod som räknas fram ur din e-postadress men inte går att
+        räkna tillbaka till den. Bara dagens antal sparas: nästa dag skrivs det över, så ingen historik
+        finns. Räkningen hålls helt skild från frågorna.
+      </p>
+
       <h2 className="mt-4 text-xl font-semibold">Var uppgifterna behandlas</h2>
       <p>
         Appen körs hos Vercel och databasen hos Neon, båda i Frankfurt (EU). Dina frågor skickas

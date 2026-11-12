@@ -1,4 +1,4 @@
-import { convertToModelMessages, createUIMessageStreamResponse, toUIMessageStream } from "ai";
+import { convertToModelMessages, createUIMessageStream, createUIMessageStreamResponse, toUIMessageStream } from "ai";
 import { z } from "zod";
 import { AiProviderNotConfiguredError, getModels } from "@/ai/models";
 import { answer } from "@/answering";
@@ -6,7 +6,9 @@ import type { ChatMessage } from "@/answering/messages";
 import { logsQuestions } from "@/access";
 import { currentViewer } from "@/access/viewer";
 import { db } from "@/db/client";
+import { nextSession } from "@/material";
 import { swedishToday } from "@/unlocking";
+import { countMessage, dailyLimit, limitReachedMessage, refundMessage } from "@/usage";
 
 export const maxDuration = 60;
 
@@ -43,39 +45,80 @@ export async function POST(request: Request) {
   // The instructions, not the history, decide what may be taught.
   const messages = body.messages
     .filter((m) => m.role === "user" || m.role === "assistant")
+    // The fixed "daily limit reached" reply is for the Student, not context for the model.
+    .filter((m) => !(m.metadata as { limitReached?: boolean } | undefined)?.limitReached)
     .slice(-MAX_HISTORY_MESSAGES)
     .map((m) => ({ ...m, parts: m.parts.filter(isTextPart) }) as ChatMessage);
   const last = messages.at(-1);
   const question = last?.parts.map((part) => (part.type === "text" ? part.text : "")).join("") ?? "";
   if (last?.role !== "user" || !question.trim()) return new Response("No question", { status: 400 });
 
+  // The Teacher, also when viewing as a Student, has no limit. A real Student always has a key;
+  // a session from before the limit existed has none, so it logs in again.
+  const today = swedishToday();
+  const counted = !viewer.viewingAsTeacher;
+  if (counted) {
+    if (!viewer.usageKey) return new Response("Log in again", { status: 401 });
+    const limit = dailyLimit();
+    const { allowed } = await countMessage(db, viewer.usageKey, today, limit);
+    if (!allowed) return replyWith(messages, limitReachedMessage(limit, await nextSession(db, cohortId, today)));
+  }
+  // A message that gets no answer doesn't count against the limit.
+  const refund = () => (counted && viewer.usageKey ? refundMessage(db, viewer.usageKey, today) : Promise.resolve());
+
   let models;
   try {
     models = await getModels();
   } catch (error) {
+    await refund();
     if (error instanceof AiProviderNotConfiguredError) {
       return new Response("SocratEase har ingen AI-leverantör konfigurerad än.", { status: 503 });
     }
     throw error;
   }
 
-  const { kind, sources, upcoming, hint, result } = await answer(
-    { db, models },
-    {
-      question,
-      conversation: await convertToModelMessages(messages.slice(0, -1)),
-      cohortId,
-      today: swedishToday(),
-      // The Question Log is for Students' questions; the Teacher's own tries would skew it.
-      logQuestion: logsQuestions(viewer),
-    },
-  );
+  let answered;
+  try {
+    answered = await answer(
+      { db, models },
+      {
+        question,
+        conversation: await convertToModelMessages(messages.slice(0, -1)),
+        cohortId,
+        today,
+        // The Question Log is for Students' questions; the Teacher's own tries would skew it.
+        logQuestion: logsQuestions(viewer),
+      },
+    );
+  } catch (error) {
+    await refund();
+    throw error;
+  }
+  const { kind, sources, upcoming, hint, result } = answered;
 
   return createUIMessageStreamResponse({
     stream: toUIMessageStream({
       stream: result.stream,
       originalMessages: messages,
       messageMetadata: ({ part }) => (part.type === "start" ? { kind, sources, upcoming, hint } : undefined),
+    }),
+  });
+}
+
+/** Answers with a fixed message instead of the model, e.g. once the daily limit is reached. */
+function replyWith(originalMessages: ChatMessage[], text: string) {
+  return createUIMessageStreamResponse({
+    stream: createUIMessageStream<ChatMessage>({
+      originalMessages,
+      execute({ writer }) {
+        writer.write({
+          type: "start",
+          messageMetadata: { kind: "uncovered", sources: [], upcoming: [], hint: null, limitReached: true },
+        });
+        writer.write({ type: "text-start", id: "reply" });
+        writer.write({ type: "text-delta", id: "reply", delta: text });
+        writer.write({ type: "text-end", id: "reply" });
+      },
     }),
   });
 }
