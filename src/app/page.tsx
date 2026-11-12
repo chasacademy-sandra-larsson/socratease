@@ -1,4 +1,5 @@
 import { asc } from "drizzle-orm";
+import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { requireViewer } from "@/access/viewer";
@@ -26,7 +27,14 @@ async function ChatForViewer() {
   if (allCohorts.length === 0) {
     return <p className="text-zinc-500">Det finns ingen klass med kursmaterial än.</p>;
   }
-  return <Chat cohorts={allCohorts} />;
+  return (
+    <>
+      <Link href="/larare" className="text-sm text-zinc-500 underline">
+        Lärarvy: frågor och källor
+      </Link>
+      <Chat cohorts={allCohorts} />
+    </>
+  );
 }
 
 export default function Home() {
