@@ -4,6 +4,7 @@ En sokratisk kursassistent för yrkeshögskoleutbildningen Fullstack JavaScript/
 
 Projektet drivs som ett portfolioprojekt. Inga riktiga studenter släpps in förrän villkoren i [ADR 0006](docs/adr/0006-ai-provider-requirements.md) är uppfyllda.
 
+- **Live:** [socratease-one.vercel.app](https://socratease-one.vercel.app). Inloggningen är öppen bara för läraren och studenter på en klasslista
 - Ordlista med domänens begrepp: [`GLOSSARY.md`](GLOSSARY.md)
 - Arkitekturbeslut (ADR): [`docs/adr/`](docs/adr/)
 - Specifikation för v1: [`docs/spec-v1.md`](docs/spec-v1.md) och ärendena på GitHub
