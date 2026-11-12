@@ -39,17 +39,23 @@ try {
   const [cohort] = await db.select({ id: cohorts.id }).from(cohorts).where(eq(cohorts.name, cohortName));
   if (!cohort) throw new Error(`No Cohort named ${cohortName}; pass its Notion root page id to create it`);
 
-  const started = Date.now();
-  const report = await syncCohort(
-    { db, models: await getModels(), notion: createNotionReader(process.env.NOTION_TOKEN) },
-    cohort.id,
-  );
-  console.log(`Synced ${report.sources} Sources into ${cohortName} in ${Math.round((Date.now() - started) / 1000)} s`);
-  if (report.skipped.length > 0) {
-    console.log(`\nSkipped (${report.skipped.length}):\n  ${report.skipped.join("\n  ")}`);
-  }
-  if (report.notFilledIn.length > 0) {
-    console.log(`\nNot filled in (${report.notFilledIn.length}):\n  ${report.notFilledIn.join("\n  ")}`);
+  // A run reads a bounded number of pages; keep going until everything is in sync.
+  const models = await getModels();
+  const notion = createNotionReader(process.env.NOTION_TOKEN);
+  for (;;) {
+    const report = await syncCohort({ db, models, notion }, cohort.id);
+    console.log(
+      `${report.status}: ${report.pagesSynced} pages synced, ${report.pagesRemaining} left, ${report.sourcesRemoved} Sources removed`,
+    );
+    for (const failure of report.failures) console.log(`  Failed: ${failure}`);
+    if (report.status !== "continues") {
+      if (report.skipped.length > 0) console.log(`\nSkipped (${report.skipped.length}):\n  ${report.skipped.join("\n  ")}`);
+      if (report.notFilledIn.length > 0) {
+        console.log(`\nNot filled in (${report.notFilledIn.length}):\n  ${report.notFilledIn.join("\n  ")}`);
+      }
+      if (report.status !== "completed") process.exitCode = 1;
+      break;
+    }
   }
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);

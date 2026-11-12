@@ -13,6 +13,8 @@ export type NotionBlock = { id: string; type: string; text: string; hasChildren:
 export type NotionPage = {
   id: string;
   url: string;
+  /** When anything on the page last changed, e.g. "2026-11-12T08:30:00.000Z". */
+  lastEditedTime: string;
   properties: Record<string, string | IsoDate | string[] | null>;
 };
 
@@ -48,7 +50,13 @@ type ApiProperty = {
   relation?: { id: string }[];
   select?: { name: string } | null;
 };
-type ApiPage = { id: string; url: string; public_url: string | null; properties: Record<string, ApiProperty> };
+type ApiPage = {
+  id: string;
+  url: string;
+  public_url: string | null;
+  last_edited_time: string;
+  properties: Record<string, ApiProperty>;
+};
 type ApiList<T> = { results: T[]; next_cursor: string | null };
 
 /** A NotionReader over the Notion API, using SocratEase's own internal integration (ADR 0007). */
@@ -117,6 +125,7 @@ export function createNotionReader(token: string): NotionReader {
           id: page.id,
           // Students reach the material through the published site, so link there when it exists.
           url: page.public_url ?? page.url,
+          lastEditedTime: page.last_edited_time,
           properties: Object.fromEntries(
             Object.entries(page.properties).map(([name, value]) => [name, propertyValue(value)]),
           ),
