@@ -6,39 +6,16 @@ import { useState } from "react";
 import type { ChatMessage } from "@/answering/messages";
 import { formatSwedishDate } from "@/unlocking";
 
-type Props = { cohorts?: { id: string; name: string }[] };
-
-export function Chat({ cohorts }: Props) {
-  const [cohortId, setCohortId] = useState(cohorts?.[0]?.id);
+/** `cohortId` is the Cohort the page was shown for; the server refuses a message for another one. */
+export function Chat({ cohortId }: { cohortId: string }) {
   const [input, setInput] = useState("");
   const { messages, sendMessage, setMessages, status, error } = useChat<ChatMessage>({
-    transport: new DefaultChatTransport({ api: "/api/chat", body: () => ({ cohortId }) }),
+    transport: new DefaultChatTransport({ api: "/api/chat", body: { cohortId } }),
   });
   const busy = status !== "ready" && status !== "error";
 
   return (
     <div className="flex flex-col gap-6">
-      {cohorts && (
-        <label className="flex items-center gap-2 text-sm text-zinc-500">
-          Klass
-          <select
-            value={cohortId}
-            onChange={(e) => {
-              // A new Cohort starts a new Conversation, so no answer draws on another Cohort's material.
-              setCohortId(e.target.value);
-              setMessages([]);
-            }}
-            className="rounded border px-2 py-1 dark:bg-zinc-900"
-          >
-            {cohorts.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-
       {messages.map((message) => (
         <div key={message.id} className={message.role === "user" ? "self-end max-w-[80%]" : "max-w-full"}>
           <div
@@ -83,7 +60,11 @@ export function Chat({ cohorts }: Props) {
         </div>
       ))}
 
-      {error && <p className="text-red-700 dark:text-red-400">Något gick fel. Försök igen.</p>}
+      {error && (
+        <p className="text-red-700 dark:text-red-400">
+          Något gick fel. Försök igen, eller ladda om sidan om du har bytt klass eller vy i en annan flik.
+        </p>
+      )}
 
       {messages.length > 0 && (
         <button

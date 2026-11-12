@@ -1,12 +1,12 @@
-import { asc, sql } from "drizzle-orm";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { Suspense } from "react";
+import { listCohorts } from "@/access";
+import { startViewingAs } from "@/access/view-as-actions";
 import { requireViewer } from "@/access/viewer";
 import { db } from "@/db/client";
-import { cohorts } from "@/db/schema";
 import { questionInsights } from "@/teacher-view";
 
 export const metadata: Metadata = { title: "Lärarvy – SocratEase" };
@@ -17,11 +17,7 @@ async function Insights({ searchParams }: { searchParams: PageProps<"/larare">["
   const viewer = await requireViewer();
   if (viewer.role !== "teacher") redirect("/");
 
-  // Cohorts synced from Notion first: those are the real ones.
-  const all = await db
-    .select({ id: cohorts.id, name: cohorts.name, root: cohorts.notionRootPageId })
-    .from(cohorts)
-    .orderBy(sql`${cohorts.notionRootPageId} is null`, asc(cohorts.name));
+  const all = await listCohorts(db);
   if (all.length === 0) return <p className="text-zinc-500">Det finns ingen klass än.</p>;
   const { klass } = await searchParams;
   const cohort = all.find((c) => c.id === klass) ?? all[0];
@@ -40,6 +36,11 @@ async function Insights({ searchParams }: { searchParams: PageProps<"/larare">["
           </Link>
         ))}
       </nav>
+
+      <form action={startViewingAs}>
+        <input type="hidden" name="cohortId" value={cohort.id} />
+        <button className="text-sm underline">Visa som student i {cohort.name}</button>
+      </form>
 
       <section className="flex flex-col gap-3">
         <h2 className="text-xl font-semibold">Obesvarade frågor</h2>

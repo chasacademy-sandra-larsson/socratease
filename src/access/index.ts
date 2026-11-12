@@ -1,4 +1,4 @@
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { cohorts, rosterEntries } from "@/db/schema";
 
@@ -7,9 +7,12 @@ const TEACHER_DOMAIN = "chasacademy.se";
 
 type Db = NodePgDatabase;
 
-/** Who is using SocratEase. Carries no name or email (ADR 0003). */
+/**
+ * Who is using SocratEase. Carries no name or email (ADR 0003). A Student with
+ * `viewingAsTeacher` is the Teacher trying SocratEase as a Student of that Cohort.
+ */
 export type Viewer =
-  | { role: "student"; cohortId: string; cohortName: string }
+  | { role: "student"; cohortId: string; cohortName: string; viewingAsTeacher?: true }
   | { role: "teacher" };
 
 export type DeniedReason = "unverified-email" | "wrong-domain" | "not-on-roster" | "cohort-ended";
@@ -50,6 +53,44 @@ export async function resolveAccess(
   }
 
   return { granted: true, role: "student", cohortId: entry.cohortId, cohortName: entry.cohortName };
+}
+
+/**
+ * The Viewer a page or request acts as: the Teacher who chose to view as a Student of a Cohort
+ * becomes that Student. Anyone else stays who they are, so a Student can never switch.
+ */
+export async function viewAs(
+  db: Db,
+  viewer: Viewer,
+  cohortId: string | null,
+  { today = new Date() }: { today?: Date } = {},
+): Promise<Viewer> {
+  if (viewer.role !== "teacher" || !cohortId || !UUID.test(cohortId)) return viewer;
+  const [cohort] = await db
+    .select({ name: cohorts.name, endsOn: cohorts.endsOn })
+    .from(cohorts)
+    .where(eq(cohorts.id, cohortId));
+  // An ended Cohort has no Students who can get in, so there is nothing to view as.
+  if (!cohort || (cohort.endsOn && cohort.endsOn < today.toISOString().slice(0, 10))) return viewer;
+  return { role: "student", cohortId, cohortName: cohort.name, viewingAsTeacher: true };
+}
+
+/**
+ * Whether a Viewer's questions go to the Question Log: only real Students'. The Teacher's own
+ * questions, also when viewing as a Student, would distort what the log shows about Students.
+ */
+export function logsQuestions(viewer: Viewer): boolean {
+  return viewer.role === "student" && !viewer.viewingAsTeacher;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Every Cohort, the ones synced from Notion (the real ones) first. */
+export async function listCohorts(db: Db) {
+  return db
+    .select({ id: cohorts.id, name: cohorts.name })
+    .from(cohorts)
+    .orderBy(sql`${cohorts.notionRootPageId} is null`, asc(cohorts.name));
 }
 
 /**
