@@ -43,9 +43,11 @@ async function syncedSources() {
   return rows;
 }
 
+// Its Period ends far ahead, so the Cohort's end never lands in the past however late tests run.
 const course = {
   id: "course-fe",
   properties: { Kursnamn: "Frontendutveckling", Period: "2026-09-14" },
+  dateEnds: { Period: "2099-12-31" },
 };
 
 function database(id: string, title: string, rows: FakeBlock["rows"]): FakeBlock {
@@ -629,6 +631,49 @@ describe("syncCohort, run after run", () => {
     expect(report.sourcesRemoved).toBe(1);
 
     expect((await syncedSources()).map((s) => s.title)).toEqual(["HTML"]);
+  });
+
+  it("sets the Cohort's end date to the end of its last Course's Period", async () => {
+    const courses = (lastEnd: string) => [
+      database("db-kurser", "Översikt kurser", [
+        { ...course, dateEnds: { Period: "2026-11-08" } },
+        { id: "course-exjobb", properties: { Kursnamn: "Examensarbete", Period: "2028-05-22" }, dateEnds: { Period: lastEnd } },
+        { id: "course-undated", properties: { Kursnamn: "Utan period", Period: null } },
+      ]),
+    ];
+
+    await sync(courses("2028-06-17"));
+    const [first] = await db.select({ endsOn: cohorts.endsOn }).from(cohorts).where(eq(cohorts.id, cohortId));
+    await sync(courses("2028-06-24"));
+    const [moved] = await db.select({ endsOn: cohorts.endsOn }).from(cohorts).where(eq(cohorts.id, cohortId));
+
+    expect([first.endsOn, moved.endsOn]).toEqual(["2028-06-17", "2028-06-24"]);
+  });
+
+  it("counts a Course whose Period is a single day when finding the Cohort's end", async () => {
+    await sync([
+      database("db-kurser", "Översikt kurser", [
+        { ...course, dateEnds: { Period: "2026-11-08" } },
+        { id: "course-exjobb", properties: { Kursnamn: "Examensarbete", Period: "2028-05-22" } },
+      ]),
+    ]);
+
+    const [row] = await db.select({ endsOn: cohorts.endsOn }).from(cohorts).where(eq(cohorts.id, cohortId));
+    expect(row.endsOn).toBe("2028-05-22");
+  });
+
+  it("never moves the Cohort's end into the past, which would lock Students out and delete their data", async () => {
+    await db.update(cohorts).set({ endsOn: "2028-06-17" }).where(eq(cohorts.id, cohortId));
+    const report = await sync(
+      [database("db-kurser", "Översikt kurser", [{ ...course, dateEnds: { Period: "2025-06-17" } }])],
+      { now: new Date("2026-11-12T03:00:00Z") },
+    );
+
+    const [row] = await db.select({ endsOn: cohorts.endsOn }).from(cohorts).where(eq(cohorts.id, cohortId));
+    expect(row.endsOn).toBe("2028-06-17");
+    expect(report.failures).toContain(
+      "Den sista kursen slutar 2025-06-17 enligt Notion, vilket har passerat. Klassens slutdatum ändrades inte.",
+    );
   });
 
   it("reads a Course's Assignments again when its Period moves, with the new unlock date", async () => {

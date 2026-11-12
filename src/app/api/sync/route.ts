@@ -1,5 +1,5 @@
-import { timingSafeEqual } from "node:crypto";
 import { isNotNull } from "drizzle-orm";
+import { authorizedCron } from "@/app/api/cron-auth";
 import { db } from "@/db/client";
 import { cohorts } from "@/db/schema";
 import { syncForAWhile } from "@/sync";
@@ -13,7 +13,7 @@ export const maxDuration = 300;
  * sends CRON_SECRET as a bearer token; nobody else can start a sync this way.
  */
 export async function GET(request: Request) {
-  if (!authorized(request.headers.get("authorization"))) {
+  if (!authorizedCron(request)) {
     return new Response("Unauthorized", { status: 401 });
   }
   const deps = await syncDepsFromEnv();
@@ -35,13 +35,4 @@ export async function GET(request: Request) {
     }
   }
   return Response.json(reports);
-}
-
-/** Compares the bearer token in constant time, so its value can't be learned from timing. */
-function authorized(header: string | null): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret || !header) return false;
-  const expected = Buffer.from(`Bearer ${secret}`);
-  const actual = Buffer.from(header);
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }

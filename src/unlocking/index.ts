@@ -52,3 +52,10 @@ export function unlockStatus(
   const date = unlocksOn(material);
   return { status: isUnlocked(date, cohortToday(cohort, today)) ? "unlocked" : "upcoming", unlocksOn: date };
 }
+
+/** The day `days` after (or, if negative, before) `day`. */
+export function addDays(day: IsoDate, days: number): IsoDate {
+  const date = new Date(`${day}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}

@@ -98,7 +98,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Every Cohort, the ones synced from Notion (the real ones) first. */
 export async function listCohorts(db: Db) {
   return db
-    .select({ id: cohorts.id, name: cohorts.name })
+    .select({ id: cohorts.id, name: cohorts.name, endsOn: cohorts.endsOn, fromNotion: sql<boolean>`${cohorts.notionRootPageId} is not null` })
     .from(cohorts)
     .orderBy(sql`${cohorts.notionRootPageId} is null`, asc(cohorts.name));
 }

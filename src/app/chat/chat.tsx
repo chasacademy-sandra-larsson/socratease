@@ -2,6 +2,7 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
+import Link from "next/link";
 import { useState } from "react";
 import type { ChatMessage } from "@/answering/messages";
 import { formatSwedishDate } from "@/unlocking";
@@ -101,6 +102,13 @@ export function Chat({ cohortId }: { cohortId: string }) {
           Fråga
         </button>
       </form>
+      <p className="text-xs text-zinc-500">
+        Dina frågor sparas anonymt och kan läsas av läraren, men inte vem som frågade. Kod du klistrar
+        in sparas inte.{" "}
+        <Link href="/integritet" className="underline">
+          Läs mer
+        </Link>
+      </p>
     </div>
   );
 }

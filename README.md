@@ -79,6 +79,10 @@ Sync is incremental (ADR 0005): it reads only pages edited since the last run, a
 
 On Vercel, a cron job calls `/api/sync` once a day at 02:00 UTC. It syncs every Cohort with a root page, and needs `CRON_SECRET`, `NOTION_TOKEN`, `AI_PROVIDER=vertex` and access to Vertex AI in the project's environment. Without them it answers 401 or 503 and syncs nothing.
 
+## Retention
+
+A cron job calls `/api/retention` every night at 04:00 UTC, after the sync. It deletes the Question Log and the Roster of every Cohort that ended more than 30 days ago, and daily usage counts from earlier days (ADR 0003). Course material stays. A Cohort's end date is set by Sync, from the end of its last Course's Period in Notion. Sync never moves it into the past, since that would lock Students out and get their data deleted; it reports a failure instead. The Teacher view shows the end date and the night of deletion. The route needs `CRON_SECRET`, like `/api/sync`.
+
 ## Production
 
 The app runs on Vercel (region `fra1`), with a managed Postgres with pgvector in the EU (ADR 0004). `DATABASE_URL` is set in the Vercel project.
