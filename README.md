@@ -64,14 +64,18 @@ Setup, once:
 2. Give it access to the root page only (the integration's Access tab, or the page's ••• → Connections).
 3. Put its secret in `.env.local` as `NOTION_TOKEN`.
 
-Then, with Vertex AI set up (`GCP_PROJECT_ID` and `gcloud auth application-default login`):
+Then, with Vertex AI set up (`GCP_PROJECT_ID` in `.env.local` and `gcloud auth application-default login`) and the database running (`pnpm db:up`):
 
 ```sh
 AI_PROVIDER=vertex pnpm sync FJS26 3c389e315a7081598a0ef61addbcb228   # first time: saves the root page
 AI_PROVIDER=vertex pnpm sync FJS26                                    # later runs
 ```
 
-Real Course material is only ever sent to `vertex`, so the command refuses any other provider (ADR 0008). It prints the Sessions that are not filled in yet: their sections hold nothing but the Session template's placeholder text, so they are not indexed. Sync is a full run for now; incremental, scheduled sync comes with #11.
+Real Course material is only ever sent to `vertex`, so the command refuses any other provider (ADR 0008). A full run of FJS26 takes about 7 minutes. It prints the Sessions that are not filled in yet: their sections hold nothing but the Session template's placeholder text, so they are not indexed.
+
+**When to run it.** Sync reads everything that is filled in, including Sessions weeks ahead. Each Source is stored with its unlock date, and every question checks that date against today, so Upcoming material unlocks by itself on its day. Run Sync again only after changing something in Notion: filling in new Sessions, editing a Session, Study Material, an Assignment or a Course Goal, or moving a date.
+
+Until #11, Sync is a full run on demand: material deleted in Notion stays in SocratEase, and every Source is embedded again on each run.
 
 ## Production
 

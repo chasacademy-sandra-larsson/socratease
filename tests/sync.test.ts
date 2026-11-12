@@ -33,6 +33,7 @@ async function syncedSources() {
       title: sources.title,
       url: sources.url,
       unlocksOn: sources.unlocksOn,
+      deadline: sources.deadline,
       text: chunks.text,
     })
     .from(sources)
@@ -234,6 +235,7 @@ describe("syncCohort", () => {
       courseName: "Frontendutveckling",
       url: "https://notion.example/exam-u02#h2kod",
       unlocksOn: "2026-09-14",
+      deadline: "2026-11-08",
     });
     expect(synced[0].text).toContain("Sidan hämtar dina repon från GitHubs API.");
     expect(synced[0].text).not.toContain("dynamisk");

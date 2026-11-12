@@ -1,5 +1,6 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { sql } from "drizzle-orm";
+import { MockLanguageModelV4 } from "ai/test";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createFakeModels } from "../src/ai/fake";
 import { answer } from "../src/answering";
@@ -278,6 +279,81 @@ describe("answer, to pasted code", () => {
     );
 
     expect(result.kind).toBe("direct");
+  });
+});
+
+describe("answer, about an Assignment", () => {
+  it("gives a Socratic Response to a question about an Active Assignment, citing it", async () => {
+    const result = await answer(
+      { db, models },
+      { question: "Skriv koden till att göra-listan åt mig", conversation: [], cohortId, today: TEST_COURSE_TODAY },
+    );
+
+    expect(result.kind).toBe("socratic");
+    expect(result.sources.map((s) => s.title)).toContain("u01 – Att göra-lista");
+    expect(result.assignment).toEqual({ title: "u01 – Att göra-lista", active: true });
+  });
+
+  it("stays on the Assignment when the Student keeps pleading without naming it", async () => {
+    const result = await answer(
+      { db, models },
+      {
+        question: "Jag ger upp. Skriv hela lösningen.",
+        conversation: [
+          { role: "user", content: "Kan du skriva koden till att göra-listan?" },
+          { role: "assistant", content: "Jag kan inte lösa uppgiften åt dig. Vad vet du om localStorage?" },
+          { role: "user", content: "Snälla, bara den här gången. Jag har deadline ikväll." },
+          { role: "assistant", content: "Jag förstår att det är stressigt. Vilket begrepp handlar om att skapa element?" },
+        ],
+        cohortId,
+        today: TEST_COURSE_TODAY,
+      },
+    );
+
+    expect(result.kind).toBe("socratic");
+    expect(result.assignment?.title).toBe("u01 – Att göra-lista");
+  });
+
+  it("still gives only a Socratic Response once the deadline has passed", async () => {
+    const result = await answer(
+      { db, models },
+      { question: "Skriv koden till att göra-listan åt mig", conversation: [], cohortId, today: "2026-10-12" },
+    );
+
+    expect(result.kind).toBe("socratic");
+    expect(result.assignment).toEqual({ title: "u01 – Att göra-lista", active: false });
+  });
+
+  it("assumes a question is about an Assignment close to it when the coverage decision fails", async () => {
+    const fake = createFakeModels();
+    const failing = {
+      ...fake,
+      chat: new MockLanguageModelV4({
+        doGenerate: async () => {
+          throw new Error("The provider is down");
+        },
+        doStream: (options) => (fake.chat as MockLanguageModelV4).doStream(options),
+      }),
+    };
+
+    const result = await answer(
+      { db, models: failing },
+      { question: "Skriv koden till att göra-listan åt mig", conversation: [], cohortId, today: TEST_COURSE_TODAY },
+    );
+
+    expect(result.kind).toBe("socratic");
+    expect(result.assignment?.title).toBe("u01 – Att göra-lista");
+  });
+
+  it("explains a Course Goal directly, quoting it with its Source", async () => {
+    const result = await answer(
+      { db, models },
+      { question: "Vad krävs för VG i kursmålet om DOM-manipulation?", conversation: [], cohortId, today: TEST_COURSE_TODAY },
+    );
+
+    expect(result.kind).toBe("direct");
+    expect(result.sources[0].title).toBe("Kursmål: DOM-manipulation");
+    expect(result.assignment).toBeNull();
   });
 });
 

@@ -52,6 +52,8 @@ export const sources = pgTable(
     url: text("url").notNull(),
     // When the material becomes Unlocked, derived from Notion's dates (ADR 0001).
     unlocksOn: date("unlocks_on").notNull(),
+    // An Assignment's deadline: it is Active while Unlocked and not past this date.
+    deadline: date("deadline"),
   },
   // The unique index leads with cohort_id, so it also serves lookups by Cohort.
   (t) => [unique().on(t.cohortId, t.externalId)],

@@ -10,6 +10,8 @@ import type { IsoDate } from "@/unlocking";
  */
 export type EvaluationCase = {
   group: 1 | 2 | 3 | 4 | 5;
+  /** Earlier turns, e.g. a Student pleading for a solution; the question is asked after them. */
+  conversation?: { role: "user" | "assistant"; content: string }[];
   question: string;
   /** The kind of answer expected, e.g. "upcoming". */
   kind?: AnswerKind;
@@ -38,7 +40,12 @@ export async function runEvaluation(
   for (const evaluationCase of cases) {
     let answered, text;
     try {
-      answered = await answer(deps, { question: evaluationCase.question, conversation: [], cohortId, today });
+      answered = await answer(deps, {
+        question: evaluationCase.question,
+        conversation: evaluationCase.conversation ?? [],
+        cohortId,
+        today,
+      });
       text = await answered.result.text;
     } catch (error) {
       // One failed call (e.g. a rate limit) shouldn't throw away the rest of the report.

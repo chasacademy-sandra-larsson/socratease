@@ -18,6 +18,8 @@ export type SourceInput = {
   courseStartsOn: IsoDate;
   /** A Session's date, from Notion. */
   sessionDate?: IsoDate;
+  /** An Assignment's deadline, from Notion. */
+  deadline?: IsoDate;
   text: string;
   /** The text divided at natural boundaries, e.g. H3 headings. Long text is chunked per section. */
   sections?: string[];
@@ -93,6 +95,7 @@ export async function indexSource(
       title: input.title,
       url: input.url,
       unlocksOn: unlocksOn(input),
+      deadline: input.deadline ?? null,
     };
     const [row] = await tx
       .insert(sources)

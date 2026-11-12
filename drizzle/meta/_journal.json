@@ -57,6 +57,13 @@
       "when": 1794406217154,
       "tag": "0007_cohort-notion-root",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794477830646,
+      "tag": "0008_assignment-deadline",
+      "breakpoints": true
     }
   ]
 }
