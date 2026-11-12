@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createPool } from "../src/db/pool";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { sql } from "drizzle-orm";
-import { importRoster, logsQuestions, resolveAccess, viewAs } from "../src/access";
+import { importRoster, logsQuestions, resolveAccess, usageKeyFor, viewAs } from "../src/access";
 import { cohorts } from "../src/db/schema";
 
 // Integration tests through the access decision: a Google identity + the Roster in the database.
@@ -141,5 +141,21 @@ describe("viewAs", () => {
     expect(logsQuestions({ role: "student", cohortId: fjs26, cohortName: "FJS26" })).toBe(true);
     expect(logsQuestions(viewingAs)).toBe(false);
     expect(logsQuestions({ role: "teacher" })).toBe(false);
+  });
+});
+
+describe("usageKeyFor", () => {
+  it("gives a Student the same key every time, without revealing their address", () => {
+    const key = usageKeyFor("Anna.A@student.chasacademy.se", "hemlighet");
+
+    expect(usageKeyFor("anna.a@student.chasacademy.se", "hemlighet")).toBe(key);
+    expect(usageKeyFor("bo.b@student.chasacademy.se", "hemlighet")).not.toBe(key);
+    expect(key).not.toMatch(/anna|student|chasacademy/i);
+  });
+
+  it("can't be recomputed from the address alone, without the app's secret", () => {
+    expect(usageKeyFor("anna.a@student.chasacademy.se", "en annan")).not.toBe(
+      usageKeyFor("anna.a@student.chasacademy.se", "hemlighet"),
+    );
   });
 });

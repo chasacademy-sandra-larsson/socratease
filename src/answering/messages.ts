@@ -7,6 +7,8 @@ export type AnswerMetadata = {
   sources: AnsweredSource[];
   upcoming: UpcomingSource[];
   hint: Hint | null;
+  /** A fixed reply saying the daily limit is reached; never sent back to the model. */
+  limitReached?: true;
 };
 
 export type ChatMessage = UIMessage<AnswerMetadata>;

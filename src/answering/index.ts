@@ -1,10 +1,11 @@
-import { and, asc, cosineDistance, eq, gt, gte, lte, min, sql } from "drizzle-orm";
+import { and, asc, cosineDistance, eq, gt, lte, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { generateText, Output, streamText, type ModelMessage } from "ai";
 import { z } from "zod";
 import { embeddingModelId, embedTexts } from "@/ai/embed";
 import type { AiModels } from "@/ai/models";
 import { chunks, cohorts, sources } from "@/db/schema";
+import { nextSession } from "@/material";
 import { containsCode, logQuestion } from "@/question-log";
 import { cohortToday, formatSwedishDate, isUnlocked, type IsoDate } from "@/unlocking";
 
@@ -199,12 +200,7 @@ const ERROR_MESSAGE = /\b[A-Z]\w*Error: \S|\bUncaught\b/;
 
 async function hintFor(db: NodePgDatabase, cohortId: string, today: IsoDate, level: number): Promise<Hint> {
   if (level < BRING_TO_SESSION_LEVEL) return { level, bringToSession: false, nextSession: null };
-  // A Session later today still counts as the next one.
-  const [next] = await db
-    .select({ date: min(sources.unlocksOn) })
-    .from(sources)
-    .where(and(eq(sources.cohortId, cohortId), eq(sources.kind, "session"), gte(sources.unlocksOn, today)));
-  return { level, bringToSession: true, nextSession: next?.date ?? null };
+  return { level, bringToSession: true, nextSession: await nextSession(db, cohortId, today) };
 }
 
 /** The Student's turns in a Conversation, oldest first. */
