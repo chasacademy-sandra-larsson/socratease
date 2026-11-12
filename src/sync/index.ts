@@ -18,6 +18,9 @@ const DATABASES = {
 
 type Course = { name: string; startsOn: string };
 
+// A line with a meeting link is about joining a Session, not Course material, so it is never indexed.
+const MEETING_LINK = /zoom\.us\//i;
+
 export type SyncReport = {
   /** How many Sources were indexed. */
   sources: number;
@@ -206,7 +209,10 @@ function sessionTitle(contents: string): string {
 async function filledInSections(notion: NotionReader, pageId: string): Promise<string[]> {
   const sections = await Promise.all(
     (await listAll(notion, pageId)).map(async (block) => {
-      if (!canDescend(block)) return onlyTemplateText([block.text]) ? "" : block.text;
+      if (!canDescend(block)) {
+        const own = await blockText(notion, block);
+        return onlyTemplateText([own]) ? "" : own;
+      }
       const nested = await Promise.all((await listAll(notion, block.id)).map((b) => blockText(notion, b)));
       return onlyTemplateText(nested.flatMap((t) => t.split("\n"))) ? "" : [block.text, ...nested].filter(Boolean).join("\n");
     }),
@@ -215,6 +221,7 @@ async function filledInSections(notion: NotionReader, pageId: string): Promise<s
 }
 
 async function blockText(notion: NotionReader, block: NotionBlock): Promise<string> {
+  if (MEETING_LINK.test(block.text)) return "";
   const own = block.type === "bulleted_list_item" ? `- ${block.text}` : block.text;
   if (!canDescend(block)) return own;
   const nested = await Promise.all((await listAll(notion, block.id)).map((b) => blockText(notion, b)));

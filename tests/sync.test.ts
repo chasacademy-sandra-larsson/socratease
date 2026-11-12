@@ -345,6 +345,41 @@ describe("syncCohort", () => {
     expect(report.notFilledIn).toEqual([]);
   });
 
+  it("leaves out Zoom links, and with them the callout that only says how to join", async () => {
+    const { reader } = createFakeNotion(ROOT, [
+      database("db-kurser", "Översikt kurser", [course]),
+      database("db-schema", "Schema", [
+        {
+          id: "session-zoom",
+          properties: { Aktivitet: "Föreläsning", Innehåll: "• Scope", Datum: "2026-11-04", Kurs: ["course-fe"] },
+          children: [
+            {
+              id: "c-ansluta",
+              type: "callout",
+              text: "Ansluta till föreläsningen",
+              children: [{ id: "z1", type: "paragraph", text: "🔗 https://us06web.zoom.us/my/fjs26 · 🕙 9.15–12.00" }],
+            },
+            {
+              id: "c-innehall",
+              type: "callout",
+              text: "Föreläsningens innehåll",
+              children: [
+                { id: "z2", type: "bulleted_list_item", text: "Block scope och function scope" },
+                { id: "z3", type: "bulleted_list_item", text: "Frågor efteråt i Zoom: https://zoom.us/j/123" },
+              ],
+            },
+          ],
+        },
+      ]),
+    ]);
+
+    await syncCohort({ db, models, notion: reader }, cohortId);
+
+    const [session] = await syncedSources();
+    expect(session.text).toContain("Block scope och function scope");
+    expect(session.text).not.toMatch(/zoom|Ansluta till föreläsningen/i);
+  });
+
   it("gives a Session outside any Course, such as an intro day, the Cohort's name as its Course", async () => {
     const { reader } = createFakeNotion(ROOT, [
       database("db-schema", "Schema", [
