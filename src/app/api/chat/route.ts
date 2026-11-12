@@ -65,7 +65,7 @@ export async function POST(request: Request) {
     throw error;
   }
 
-  const { kind, sources, upcoming, result } = await answer(
+  const { kind, sources, upcoming, hint, result } = await answer(
     { db, models },
     {
       question,
@@ -81,7 +81,7 @@ export async function POST(request: Request) {
     stream: toUIMessageStream({
       stream: result.stream,
       originalMessages: messages,
-      messageMetadata: ({ part }) => (part.type === "start" ? { kind, sources, upcoming } : undefined),
+      messageMetadata: ({ part }) => (part.type === "start" ? { kind, sources, upcoming, hint } : undefined),
     }),
   });
 }

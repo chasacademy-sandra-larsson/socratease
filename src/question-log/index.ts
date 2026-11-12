@@ -66,6 +66,14 @@ export function removeCode(text: string): string {
 }
 
 /**
+ * Whether the text holds pasted code: a fenced block, or several lines that look like code. A
+ * single code-like line is usually a question about syntax, such as "Vad betyder => ?".
+ */
+export function containsCode(text: string): boolean {
+  return /```/.test(text) || text.split("\n").filter(looksLikeCode).length >= 2;
+}
+
+/**
  * Code, not prose about code: statements, declarations, calls chained on calls, markup with
  * attributes or closing tags, and config lines (KEY=value, Header: value). A question that only
  * mentions "for-loopar" or "<div>" is kept.

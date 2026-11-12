@@ -213,6 +213,8 @@ async function filledInSections(notion: NotionReader, pageId: string): Promise<s
         const own = await blockText(notion, block);
         return onlyTemplateText([own]) ? "" : own;
       }
+      // A section headed by a meeting link is about joining the Session, so all of it is left out.
+      if (MEETING_LINK.test(block.text)) return "";
       const nested = await Promise.all((await listAll(notion, block.id)).map((b) => blockText(notion, b)));
       return onlyTemplateText(nested.flatMap((t) => t.split("\n"))) ? "" : [block.text, ...nested].filter(Boolean).join("\n");
     }),

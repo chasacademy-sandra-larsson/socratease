@@ -87,7 +87,7 @@ export const questionLog = pgTable(
       .notNull()
       .references(() => cohorts.id, { onDelete: "cascade" }),
     question: text("question").notNull(),
-    kind: text("kind", { enum: ["direct", "upcoming", "uncovered"] }).notNull(),
+    kind: text("kind", { enum: ["direct", "socratic", "upcoming", "uncovered"] }).notNull(),
     // The title of the Source the question mainly landed in; null for an Unanswered Question.
     topic: text("topic"),
     // Titles of the Sources the answer used.

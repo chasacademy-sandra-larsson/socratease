@@ -50,6 +50,15 @@ export function Chat({ cohorts }: Props) {
           >
             {message.parts.map((part, i) => (part.type === "text" ? <span key={i}>{part.text}</span> : null))}
           </div>
+          {message.metadata?.hint?.bringToSession && (
+            <p className="mt-2 text-sm text-zinc-500">
+              Kör du fast? Ta med koden till{" "}
+              {message.metadata.hint.nextSession
+                ? `nästa pass den ${formatSwedishDate(message.metadata.hint.nextSession)}`
+                : "nästa pass"}
+              .
+            </p>
+          )}
           {message.metadata?.upcoming && message.metadata.upcoming.length > 0 && (
             <ul className="mt-2 flex flex-col gap-1 text-sm text-zinc-500">
               {message.metadata.upcoming.map((item, i) => (
@@ -75,6 +84,17 @@ export function Chat({ cohorts }: Props) {
       ))}
 
       {error && <p className="text-red-700 dark:text-red-400">Något gick fel. Försök igen.</p>}
+
+      {messages.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setMessages([])}
+          disabled={busy}
+          className="self-start text-sm text-zinc-500 underline disabled:opacity-40"
+        >
+          Nytt samtal
+        </button>
+      )}
 
       <form
         onSubmit={(e) => {
