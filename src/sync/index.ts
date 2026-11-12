@@ -107,6 +107,24 @@ export async function syncCohort(
   }
 }
 
+/**
+ * Starts runs until the Cohort is in sync or `budgetMs` has passed, so a first full sync takes a
+ * few calls rather than one per 25 pages. The last run may go on past the budget, so callers keep
+ * a margin to their time limit. Used by the cron route and the Teacher's "sync now".
+ */
+export async function syncForAWhile(
+  deps: Deps,
+  cohortId: string,
+  { budgetMs, maxPages }: { budgetMs: number; maxPages?: number },
+): Promise<SyncReport[]> {
+  const started = Date.now();
+  const reports: SyncReport[] = [];
+  do {
+    reports.push(await syncCohort(deps, cohortId, { maxPages }));
+  } while (reports.at(-1)!.status === "continues" && Date.now() - started < budgetMs);
+  return reports;
+}
+
 async function run(
   db: NodePgDatabase,
   models: AiModels,

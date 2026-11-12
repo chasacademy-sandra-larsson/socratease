@@ -1,6 +1,6 @@
-import { and, eq, inArray, min, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, min, ne } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { sources } from "@/db/schema";
+import { cohorts, sources, syncRuns } from "@/db/schema";
 import { lastDayOfWeek, listQuestionLog } from "@/question-log";
 import type { IsoDate } from "@/unlocking";
 
@@ -16,6 +16,58 @@ export type SourceCount = { title: string; url: string | null; count: number };
 export type QuestionInsights = { unanswered: UnansweredGroup[]; topics: TopicCount[]; sources: SourceCount[] };
 
 const TOP_SOURCES = 10;
+const RECENT_RUNS = 10;
+
+export type SyncRun = Omit<typeof syncRuns.$inferSelect, "cohortId">;
+
+export type SyncStatus = {
+  /** Whether the Cohort's material comes from Notion at all. */
+  fromNotion: boolean;
+  /** Whether a run holds the lock right now. */
+  syncing: boolean;
+  /** The latest run that read Notion; a run skipped for the lock has nothing to show. */
+  latest: SyncRun | null;
+  /** The latest runs, newest first, including skipped ones. */
+  runs: SyncRun[];
+};
+
+/** What the Teacher view shows about syncing a Cohort from Notion, from the sync log. */
+export async function syncStatus(db: NodePgDatabase, cohortId: string, now = new Date()): Promise<SyncStatus> {
+  const run = {
+    id: syncRuns.id,
+    startedAt: syncRuns.startedAt,
+    finishedAt: syncRuns.finishedAt,
+    status: syncRuns.status,
+    pagesSynced: syncRuns.pagesSynced,
+    pagesRemaining: syncRuns.pagesRemaining,
+    sourcesRemoved: syncRuns.sourcesRemoved,
+    failures: syncRuns.failures,
+    notFilledIn: syncRuns.notFilledIn,
+    skipped: syncRuns.skipped,
+  };
+  const [[cohort], runs] = await Promise.all([
+    db
+      .select({ root: cohorts.notionRootPageId, lockedUntil: cohorts.syncLockedUntil })
+      .from(cohorts)
+      .where(eq(cohorts.id, cohortId)),
+    db.select(run).from(syncRuns).where(eq(syncRuns.cohortId, cohortId)).orderBy(desc(syncRuns.startedAt)).limit(RECENT_RUNS),
+  ]);
+  // Only if every recent run was skipped for the lock does the latest real one need its own query.
+  const [latest] = runs.some((r) => r.status !== "locked")
+    ? [runs.find((r) => r.status !== "locked")!]
+    : await db
+        .select(run)
+        .from(syncRuns)
+        .where(and(eq(syncRuns.cohortId, cohortId), ne(syncRuns.status, "locked")))
+        .orderBy(desc(syncRuns.startedAt))
+        .limit(1);
+  return {
+    fromNotion: Boolean(cohort?.root),
+    syncing: Boolean(cohort?.lockedUntil && cohort.lockedUntil > now),
+    latest: latest ?? null,
+    runs,
+  };
+}
 
 /**
  * What the Teacher view shows about a Cohort's questions, built from the anonymous Question Log

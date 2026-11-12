@@ -5,7 +5,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createFakeModels } from "../src/ai/fake";
 import { createPool } from "../src/db/pool";
 import { chunks, cohorts, sources, syncRuns } from "../src/db/schema";
-import { syncCohort } from "../src/sync";
+import { syncCohort, syncForAWhile } from "../src/sync";
 import { createFakeNotion, type FakeBlock } from "./fake-notion";
 
 // Tests through the Sync seam: a fake Notion shaped like FJS26 in, Sources and Chunks out.
@@ -724,6 +724,25 @@ describe("syncCohort, run after run", () => {
 
     expect(report.pagesSynced).toBe(1);
     expect((await syncedSources()).map((s) => s.title)).toEqual(["CSS"]);
+  });
+
+  it("keeps starting runs until everything is in sync, within a time budget", async () => {
+    const sessions = ["HTML", "CSS", "JS"].map((topic, i) => ({ ...session("2026-09-01T08:00:00.000Z", topic), id: `session-${i}` }));
+    const notion = createFakeNotion(ROOT, tree(...sessions)).reader;
+
+    const reports = await syncForAWhile({ db, models, notion }, cohortId, { budgetMs: 60_000, maxPages: 2 });
+
+    expect(reports.map((r) => r.status)).toEqual(["continues", "completed"]);
+    expect((await syncedSources()).map((s) => s.title)).toEqual(["CSS", "HTML", "JS"]);
+  });
+
+  it("stops starting runs once the time budget is spent", async () => {
+    const sessions = ["HTML", "CSS", "JS"].map((topic, i) => ({ ...session("2026-09-01T08:00:00.000Z", topic), id: `session-${i}` }));
+    const notion = createFakeNotion(ROOT, tree(...sessions)).reader;
+
+    const reports = await syncForAWhile({ db, models, notion }, cohortId, { budgetMs: 0, maxPages: 2 });
+
+    expect(reports.map((r) => r.status)).toEqual(["continues"]);
   });
 
   it("skips a run while another one holds the lock, and logs it", async () => {
