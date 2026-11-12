@@ -7,9 +7,13 @@ import { listCohorts } from "@/access";
 import { startViewingAs } from "@/access/view-as-actions";
 import { requireViewer } from "@/access/viewer";
 import { db } from "@/db/client";
-import { questionInsights } from "@/teacher-view";
+import { questionInsights, syncStatus } from "@/teacher-view";
+import { SyncSection } from "./sync-section";
 
 export const metadata: Metadata = { title: "Lärarvy – SocratEase" };
+
+// "Synka nu" runs within this page's request (ADR 0005).
+export const maxDuration = 300;
 
 // Built only from the anonymous Question Log: nothing here can show who asked (ADR 0003).
 async function Insights({ searchParams }: { searchParams: PageProps<"/larare">["searchParams"] }) {
@@ -21,7 +25,10 @@ async function Insights({ searchParams }: { searchParams: PageProps<"/larare">["
   if (all.length === 0) return <p className="text-zinc-500">Det finns ingen klass än.</p>;
   const { klass } = await searchParams;
   const cohort = all.find((c) => c.id === klass) ?? all[0];
-  const { unanswered, topics, sources } = await questionInsights(db, cohort.id);
+  const [{ unanswered, topics, sources }, sync] = await Promise.all([
+    questionInsights(db, cohort.id),
+    syncStatus(db, cohort.id),
+  ]);
 
   return (
     <>
@@ -41,6 +48,8 @@ async function Insights({ searchParams }: { searchParams: PageProps<"/larare">["
         <input type="hidden" name="cohortId" value={cohort.id} />
         <button className="text-sm underline">Visa som student i {cohort.name}</button>
       </form>
+
+      <SyncSection cohortId={cohort.id} status={sync} />
 
       <section className="flex flex-col gap-3">
         <h2 className="text-xl font-semibold">Obesvarade frågor</h2>

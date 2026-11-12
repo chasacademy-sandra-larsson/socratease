@@ -5,9 +5,12 @@ import { createFakeModels } from "../src/ai/fake";
 import { answer } from "../src/answering";
 import { createPool } from "../src/db/pool";
 import { cohorts } from "../src/db/schema";
+import { eq } from "drizzle-orm";
 import { indexSource } from "../src/material";
 import { isoWeek, lastDayOfWeek, logQuestion } from "../src/question-log";
-import { questionInsights } from "../src/teacher-view";
+import { questionInsights, syncStatus } from "../src/teacher-view";
+import { syncCohort } from "../src/sync";
+import { createFakeNotion } from "./fake-notion";
 import { TEST_COURSE_TODAY, testCourse } from "../fixtures/test-course";
 
 // Tests the Teacher view's insights, with the Question Log filled the way Students fill it.
@@ -107,5 +110,72 @@ describe("questionInsights", () => {
   ])("finds the Sunday of the week %s is in", (day, week, sunday) => {
     expect(isoWeek(day)).toBe(week);
     expect(lastDayOfWeek(week)).toBe(sunday);
+  });
+});
+
+describe("syncStatus", () => {
+  const ROOT = "root-fjs26";
+  const tree = (innehåll: string) => [
+    { id: "db-kurser", type: "child_database", text: "Översikt kurser", rows: [{ id: "course-fe", properties: { Kursnamn: "Frontend", Period: "2026-09-14" } }] },
+    {
+      id: "db-schema",
+      type: "child_database",
+      text: "Schema",
+      rows: [
+        { id: "s-1", properties: { Aktivitet: "Föreläsning", Innehåll: "• HTML", Datum: "2026-09-15", Kurs: ["course-fe"] } },
+        { id: "s-2", properties: { Aktivitet: "Workshop", Innehåll: innehåll, Datum: "2026-09-17", Kurs: ["course-fe"] } },
+      ],
+    },
+    { id: "db-exam", type: "child_database", text: "Examinationsmoment", rows: [] },
+    { id: "db-mal", type: "child_database", text: "Kursmål och Betygskriterier", rows: [] },
+  ];
+  const sync = (innehåll: string, options?: Parameters<typeof syncCohort>[2]) =>
+    syncCohort({ db, models, notion: createFakeNotion(ROOT, tree(innehåll)).reader }, cohortId, options);
+
+  beforeEach(async () => {
+    await db.update(cohorts).set({ notionRootPageId: ROOT }).where(eq(cohorts.id, cohortId));
+  });
+
+  it("shows that a Cohort has never been synced", async () => {
+    expect(await syncStatus(db, cohortId)).toEqual({ fromNotion: true, syncing: false, latest: null, runs: [] });
+  });
+
+  it("shows that a Cohort without a Notion root page isn't synced at all", async () => {
+    await db.update(cohorts).set({ notionRootPageId: null }).where(eq(cohorts.id, cohortId));
+
+    expect((await syncStatus(db, cohortId)).fromNotion).toBe(false);
+  });
+
+  it("shows the latest run, with what failed and which Sessions are not filled in", async () => {
+    await sync("");
+
+    const { latest, runs } = await syncStatus(db, cohortId);
+
+    expect(latest).toMatchObject({
+      status: "completed",
+      pagesSynced: 3,
+      failures: [],
+      notFilledIn: ["Workshop 2026-09-17 (Frontend)"],
+    });
+    expect(runs).toHaveLength(1);
+  });
+
+  it("keeps showing the last real run's lists after a run that was skipped for the lock", async () => {
+    await sync("", { now: new Date("2026-11-12T02:00:00Z") });
+    const now = new Date("2026-11-12T03:00:00Z");
+    await db.update(cohorts).set({ syncLockedUntil: new Date("2026-11-12T03:10:00Z") }).where(eq(cohorts.id, cohortId));
+    await sync("", { now });
+
+    const { latest, runs } = await syncStatus(db, cohortId, now);
+
+    expect(runs.map((r) => r.status)).toEqual(["locked", "completed"]);
+    expect(latest).toMatchObject({ status: "completed", notFilledIn: ["Workshop 2026-09-17 (Frontend)"] });
+  });
+
+  it("shows when a sync is running right now", async () => {
+    await db.update(cohorts).set({ syncLockedUntil: new Date("2026-11-12T03:10:00Z") }).where(eq(cohorts.id, cohortId));
+
+    expect((await syncStatus(db, cohortId, new Date("2026-11-12T03:05:00Z"))).syncing).toBe(true);
+    expect((await syncStatus(db, cohortId, new Date("2026-11-12T03:20:00Z"))).syncing).toBe(false);
   });
 });
