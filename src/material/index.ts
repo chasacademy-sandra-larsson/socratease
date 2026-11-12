@@ -19,6 +19,8 @@ export type SourceInput = {
   /** A Session's date, from Notion. */
   sessionDate?: IsoDate;
   text: string;
+  /** The text divided at natural boundaries, e.g. H3 headings. Long text is chunked per section. */
+  sections?: string[];
 };
 
 const MAX_CHUNK_CHARS = 1500;
@@ -76,7 +78,10 @@ export async function indexSource(
   cohortId: string,
   input: SourceInput,
 ) {
-  const texts = chunkText(input.text);
+  const texts =
+    input.sections && input.text.length > MAX_CHUNK_CHARS
+      ? input.sections.flatMap((section) => chunkText(section))
+      : chunkText(input.text);
   // Each Chunk is embedded with its Source's title, so a short Chunk keeps its context.
   const embeddings = await embedTexts(models, texts.map((t) => `${input.title}\n\n${t}`), "document");
 

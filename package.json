@@ -14,7 +14,8 @@
     "db:generate": "drizzle-kit generate",
     "roster:import": "tsx scripts/import-roster.mts",
     "seed:test-course": "tsx scripts/seed-test-course.mts",
-    "evaluate": "tsx scripts/evaluate.mts"
+    "evaluate": "tsx scripts/evaluate.mts",
+    "sync": "tsx scripts/sync.mts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.89",

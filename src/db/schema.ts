@@ -19,6 +19,8 @@ export const cohorts = pgTable("cohorts", {
   endsOn: date("ends_on"),
   // A fixed "today" for unlocking, used by the Demo Cohort so it always has Upcoming material (ADR 0001).
   fixedToday: date("fixed_today"),
+  // Sync reads only under this Notion page (ADR 0007).
+  notionRootPageId: text("notion_root_page_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

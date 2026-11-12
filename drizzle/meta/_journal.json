@@ -50,6 +50,13 @@
       "when": 1793305343182,
       "tag": "0006_question-log",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794406217154,
+      "tag": "0007_cohort-notion-root",
+      "breakpoints": true
     }
   ]
 }
