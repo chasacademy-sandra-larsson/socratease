@@ -57,6 +57,7 @@ Fel hanteras med try/catch runt await, eller med .catch() på promiset.`,
     ...JS_COURSE,
     title: "u01 – Att göra-lista",
     url: "https://example.org/testkurs#u01",
+    deadline: "2026-10-11",
     text: `Bygg en att göra-lista i vanilla JavaScript. Användaren ska kunna lägga till, bocka av och ta bort uppgifter. Listan ska sparas i localStorage så att den finns kvar när sidan laddas om.
 
 Kursmål som prövas: att manipulera DOM, att hantera händelser och att använda arrayer med map och filter.`,

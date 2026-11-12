@@ -166,6 +166,7 @@ async function assignmentSources(notion: NotionReader, page: NotionPage, course:
       title: heading ? `${assignment}: ${heading.text}` : assignment,
       url: heading ? blockLink(page, heading) : page.url,
       courseStartsOn: course.startsOn,
+      deadline: text(page, "Deadline") || undefined,
       text: [heading?.text, ...(await Promise.all(blocks.map((b) => blockText(notion, b))))].filter(Boolean).join("\n"),
     })),
   );

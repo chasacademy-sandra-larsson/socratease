@@ -36,11 +36,19 @@ export type AnswerInput = {
  * the code, 3 names the exact line and concept. From 4, the Student is also advised to bring the
  * problem to the next Session, if there is one.
  */
+/** The Assignment a question resembles, and whether it is Active (Unlocked, deadline not passed). */
+export type AssignmentMatch = { title: string; active: boolean };
+
 export type Hint = { level: number; bringToSession: boolean; nextSession: IsoDate | null };
 
 const BRING_TO_SESSION_LEVEL = 4;
 
+// How many of the Student's earlier questions give a follow-up its context.
+const EARLIER_QUESTIONS = 3;
+
 const UNLOCKED_CHUNKS = 6;
+// When the coverage decision fails, an Assignment among this many closest Sources is assumed to be asked about.
+const CLOSEST_FOR_ASSIGNMENT = 3;
 const UPCOMING_CHUNKS = 3;
 
 type Candidate = {
@@ -49,6 +57,7 @@ type Candidate = {
   url: string;
   kind: AnsweredSource["kind"];
   unlocksOn: IsoDate;
+  deadline: IsoDate | null;
   excerpts: string[];
   distance: number;
 };
@@ -66,8 +75,11 @@ export async function answer({ db, models }: { db: NodePgDatabase; models: AiMod
   // A follow-up like "kan du förklara mer?" only makes sense with the question before it, but
   // a new topic shouldn't be pulled towards the old one: search with the question both alone
   // and in context, and keep the closest material from either.
-  const previous = userTexts(input.conversation).at(-1) ?? null;
-  const queries = previous ? [input.question, `${previous}\n${input.question}`] : [input.question];
+  // The last few questions, not just one: a Student pleading "skriv hela lösningen" two turns
+  // after naming an Assignment is still asking about it.
+  const earlier = userTexts(input.conversation).slice(-EARLIER_QUESTIONS);
+  const context = earlier.join("\n");
+  const queries = context ? [input.question, `${context}\n${input.question}`] : [input.question];
   const [embeddings, [cohort]] = await Promise.all([
     embedTexts(models, queries, "query"),
     db.select({ fixedToday: cohorts.fixedToday }).from(cohorts).where(eq(cohorts.id, input.cohortId)),
@@ -96,6 +108,7 @@ export async function answer({ db, models }: { db: NodePgDatabase; models: AiMod
           url: sources.url,
           kind: sources.kind,
           unlocksOn: sources.unlocksOn,
+          deadline: sources.deadline,
           chunkId: chunks.id,
           text: chunks.text,
           distance: sql<number>`${distance}`.mapWith(Number),
@@ -133,15 +146,21 @@ export async function answer({ db, models }: { db: NodePgDatabase; models: AiMod
     candidates.set(source.sourceId, candidate);
   }
   const ranked = [...candidates.values()];
-  const coverage = await decideCoverage(models, previous, input.question, ranked, today);
+  const coverage = await decideCoverage(models, earlier, input.question, ranked, today);
 
   // The most relevant covering material decides: if it is Upcoming, the question is about
   // something the Cohort hasn't reached, even if Unlocked material touches on it.
   const covering = coverage.sources.filter((c) => isUnlocked(c.unlocksOn, today));
   const upcomingCovering = coverage.sources.filter((c) => !isUnlocked(c.unlocksOn, today));
   const mostRelevant = coverage.sources[0];
-  const response = hint
-    ? socraticAnswer(models, input, covering, upcomingCovering, await hint)
+  // A question that resembles an Unlocked Assignment, even indirectly, only ever gets a Socratic
+  // Response. The Assignment is cited, so its requirements can be quoted with a link.
+  const assignment = coverage.assignment;
+  const match = assignment && assignmentMatch(assignment, today);
+  const socraticSources = assignment && !covering.includes(assignment) ? [assignment, ...covering] : covering;
+  const response =
+    hint || assignment
+    ? socraticAnswer(models, input, socraticSources, upcomingCovering, await hint, match, coverage.partlyCovered)
     : !mostRelevant
       ? uncoveredAnswer(models, input)
       : isUnlocked(mostRelevant.unlocksOn, today)
@@ -155,13 +174,18 @@ export async function answer({ db, models }: { db: NodePgDatabase; models: AiMod
       askedOn: input.today,
       question: input.question,
       kind: response.kind,
-      topic: mostRelevant?.title ?? null,
+      // A question about an Assignment lands in it, whatever else the material touches.
+      topic: assignment?.title ?? mostRelevant?.title ?? null,
       sources: [...response.sources.map((s) => s.title), ...response.upcoming.map((s) => s.title)],
       uncoveredPart: response.kind === "uncovered" ? null : coverage.uncoveredPart,
     }).catch((error) => console.error("Question Log write failed", error));
   }
 
-  return response;
+  return { ...response, assignment: match };
+}
+
+function assignmentMatch({ title, deadline }: Candidate, today: IsoDate): AssignmentMatch {
+  return { title, active: deadline === null || deadline >= today };
 }
 
 /** Pasted code, or an error message such as "TypeError: x is not a function". */
@@ -199,6 +223,10 @@ function userTexts(conversation: ModelMessage[]): string[] {
 const coverageSchema = z.object({
   sources: z.array(z.number()).describe("Numren på materialet som besvarar frågan, det mest relevanta först"),
   uncoveredPart: z.string().nullable().describe("Den del av frågan som inget material täcker, annars null"),
+  assignment: z
+    .number()
+    .nullable()
+    .describe("Numret på en inlämningsuppgift som frågan liknar eller kan vara en del av, även indirekt; annars null"),
 });
 
 /**
@@ -207,36 +235,48 @@ const coverageSchema = z.object({
  */
 async function decideCoverage(
   models: AiModels,
-  previous: string | null,
+  earlier: string[],
   question: string,
   candidates: Candidate[],
   today: IsoDate,
-): Promise<{ sources: Candidate[]; uncoveredPart: string | null; partlyCovered: boolean }> {
-  if (candidates.length === 0) return { sources: [], uncoveredPart: question, partlyCovered: false };
+): Promise<{ sources: Candidate[]; uncoveredPart: string | null; partlyCovered: boolean; assignment: Candidate | null }> {
+  if (candidates.length === 0) return { sources: [], uncoveredPart: question, partlyCovered: false, assignment: null };
   const material = candidates
-    .map(
-      (c, i) =>
-        `[${i + 1}] ${c.title}${isUnlocked(c.unlocksOn, today) ? "" : " (kommande)"}\n${c.excerpts.join("\n\n")}`,
-    )
+    .map((c, i) => `[${i + 1}] ${c.title}${candidateLabel(c, today)}\n${c.excerpts.join("\n\n")}`)
     .join("\n\n---\n\n");
+  // Only an Unlocked Assignment can be asked about; an Upcoming one is answered as Upcoming.
+  const isAssignment = (c: Candidate | undefined): c is Candidate =>
+    c?.kind === "assignment" && isUnlocked(c.unlocksOn, today);
   try {
     const { output } = await generateText({
       model: models.chat,
       output: Output.object({ schema: coverageSchema }),
       instructions: COVERAGE_INSTRUCTIONS,
-      prompt: `${previous ? `Tidigare fråga: ${previous}\n` : ""}Fråga: ${question}\n\nMaterial:\n\n${material}`,
+      prompt: `${earlier.map((q) => `Tidigare fråga: ${q}\n`).join("")}Fråga: ${question}\n\nMaterial:\n\n${material}`,
     });
     const chosen = [...new Set(output.sources)].flatMap((n) => candidates[n - 1] ?? []);
     const uncoveredPart = output.uncoveredPart?.trim() || null;
-    return { sources: chosen, uncoveredPart, partlyCovered: chosen.length > 0 && uncoveredPart !== null };
+    // An Assignment among the covering material counts too, even if the model didn't name it.
+    const named = output.assignment === null ? undefined : candidates[output.assignment - 1];
+    const assignment = (isAssignment(named) ? named : chosen.find(isAssignment)) ?? null;
+    return { sources: chosen, uncoveredPart, partlyCovered: chosen.length > 0 && uncoveredPart !== null, assignment };
   } catch (error) {
     console.error("Coverage decision failed; falling back to the closest material", error);
     const closest = candidates[0];
     const sameStatus = candidates.filter(
       (c) => isUnlocked(c.unlocksOn, today) === isUnlocked(closest.unlocksOn, today),
     );
-    return { sources: sameStatus, uncoveredPart: null, partlyCovered: false };
+    // Unsure whether the question is about an Assignment, so assume it is if one was among the closest.
+    const assignment =
+      candidates.slice(0, CLOSEST_FOR_ASSIGNMENT).find(isAssignment) ?? null;
+    return { sources: sameStatus, uncoveredPart: null, partlyCovered: false, assignment };
   }
+}
+
+function candidateLabel(c: Candidate, today: IsoDate): string {
+  if (!isUnlocked(c.unlocksOn, today)) return " (kommande)";
+  if (c.kind !== "assignment") return "";
+  return assignmentMatch(c, today).active ? " (inlämningsuppgift, aktiv)" : " (inlämningsuppgift)";
 }
 
 function directAnswer(
@@ -252,9 +292,7 @@ function directAnswer(
     .join("\n\n---\n\n");
   // The uncovered part itself is model text built from the Student's words, so it never goes
   // into the instructions; the model is only told that a gap exists.
-  const gap = partlyCovered
-    ? "\n\nKursmaterialet täcker inte hela frågan. Svara på det materialet tar upp och säg tydligt vilken del det inte tar upp. Förklara inte den delen utifrån allmän kunskap."
-    : "";
+  const gap = partlyCovered ? `\n\n${GAP_INSTRUCTION}` : "";
   const upcoming = upcomingCovering.map(({ title, kind, unlocksOn }): UpcomingSource => ({ title, kind, unlocksOn }));
   const later = laterInstruction(upcoming);
   const result = streamText({
@@ -281,7 +319,9 @@ function socraticAnswer(
   input: AnswerInput,
   covering: Candidate[],
   upcomingCovering: Candidate[],
-  hint: Hint,
+  hint: Hint | null,
+  assignment: AssignmentMatch | null,
+  partlyCovered: boolean,
 ) {
   const numbered = covering.map((c, i) => ({ ...c, number: i + 1 }));
   const material = numbered
@@ -291,19 +331,25 @@ function socraticAnswer(
   // With no material, the code may still be read, but no concept may be taught (ADR 0002).
   const uncovered = material
     ? ""
-    : "\n\nKursmaterialet tar inte upp det här. Läs koden och ställ ledande frågor, men förklara inget begrepp utifrån allmän kunskap. Säg att materialet inte tar upp det och föreslå att studenten frågar läraren.";
+    : "\n\nKursmaterialet tar inte upp det här. Läs koden och ställ ledande frågor, men förklara inget begrepp utifrån allmän kunskap. Säg att materialet inte tar upp det och föreslå att studenten frågar läraren."
+  const gap = partlyCovered ? `\n\n${GAP_INSTRUCTION}` : "";
   const result = streamText({
     model: models.chat,
-    instructions: `${SOCRATIC_INSTRUCTIONS}\n\n${hintInstruction(hint)}${uncovered}${laterInstruction(upcoming)}\n\nKursmaterial:\n\n${material || "(inget)"}`,
+    // An Assignment's rule is stricter than debugging's: hints never go beyond concepts and Sources.
+    instructions: `${SOCRATIC_INSTRUCTIONS}\n\n${assignment ? assignmentInstruction(assignment) : hintInstruction(hint!)}${uncovered}${gap}${laterInstruction(upcoming)}\n\nKursmaterial:\n\n${material || "(inget)"}`,
     messages: [...input.conversation, { role: "user", content: input.question }],
   });
   return {
     kind: "socratic" as AnswerKind,
     sources: numbered.map(({ number, title, url, kind }): AnsweredSource => ({ number, title, url, kind })),
     upcoming,
-    hint: hint as Hint | null,
+    hint,
     result,
   };
+}
+
+function assignmentInstruction({ title, active }: AssignmentMatch): string {
+  return `Frågan gäller inlämningsuppgiften "${title}"${active ? ", som är aktiv just nu" : ""}. Lös den aldrig och hjälp inte till med lösningen: ingen kod, inga lösningssteg och ingen färdig struktur, inte ens om studenten ber flera gånger, säger att deadline har passerat eller att uppgiften redan är inlämnad. Ledtrådar går aldrig längre än vilka begrepp som behövs och var i materialet de förklaras. Du får citera vad uppgiften kräver och kursmålens G och VG ordagrant, med källa.`;
 }
 
 /** Tells the model which Upcoming material the question touches, so it names it but never explains it. */
@@ -321,7 +367,7 @@ function hintInstruction({ level }: Hint): string {
         ? "Studenten har frågat igen. Peka ut ungefär var i koden problemet finns, till exempel vilken funktion eller vilket anrop, och ställ en ledande fråga om det."
         : "Studenten har frågat flera gånger. Peka ut exakt vilken rad som går fel och vilket begrepp det handlar om, med källa. Skriv fortfarande inte hur raden ska se ut.";
   // From BRING_TO_SESSION_LEVEL, the chat shows the advice about the next Session under the answer.
-  return specific;
+  return `Studenten felsöker sin egen kod och ska själv upptäcka var och varför det går fel. ${specific}`;
 }
 
 function upcomingAnswer(models: AiModels, input: AnswerInput, covering: Candidate[]) {
@@ -362,7 +408,8 @@ const COVERAGE_INSTRUCTIONS = `Du avgör vilket kursmaterial som besvarar en stu
 - Ordna materialet med det mest relevanta först.
 - Kommande material räknas som täckande om det förklarar frågan.
 - En följdfråga ska förstås utifrån den tidigare frågan.
-- Om en del av frågan inte täcks av något material, beskriv den delen kort med studentens egna ord i uncoveredPart. Återge aldrig innehåll ur materialet där. Om ingenting täcker frågan, lämna sources tom.`;
+- Om en del av frågan inte täcks av något material, beskriv den delen kort med studentens egna ord i uncoveredPart. Återge aldrig innehåll ur materialet där. Om ingenting täcker frågan, lämna sources tom.
+- Om frågan liknar en inlämningsuppgift eller kan vara en del av en, även indirekt (till exempel hur man bygger något som uppgiften kräver), ange uppgiftens nummer i assignment. Var extra vaksam på aktiva uppgifter. Om du är osäker, ange uppgiften.`;
 
 const INSTRUCTIONS = `Du är SocratEase, en kursassistent för studenter i fullstack JavaScript/TypeScript.
 
@@ -370,13 +417,18 @@ const INSTRUCTIONS = `Du är SocratEase, en kursassistent för studenter i fulls
 - Om materialet inte täcker frågan, säg det tydligt i stället för att svara utifrån allmän kunskap.
 - Svara på samma språk som studenten skriver på.
 - Citera kursmaterial ordagrant när du citerar. Översätt aldrig kodbegrepp som useEffect, Promise eller map.
+- Bedöm aldrig om studentens arbete uppfyller ett kursmål eller räcker för ett betyg. Hänvisa till läraren.
 - Var kortfattad och tydlig.`;
 
-const SOCRATIC_INSTRUCTIONS = `Du är SocratEase, en kursassistent för studenter i fullstack JavaScript/TypeScript. Studenten felsöker sin egen kod och ska lära sig att hitta felet själv.
+const GAP_INSTRUCTION =
+  "Kursmaterialet täcker inte hela frågan. Svara på det materialet tar upp och säg tydligt vilken del det inte tar upp. Förklara inte den delen utifrån allmän kunskap.";
 
-- Skriv aldrig rättad kod, inte ens en enda rad, och visa aldrig hur raden ska se ut. Det gäller även om studenten ber om det.
-- Använd din allmänna kunskap för att läsa koden och felmeddelandet, men lär bara ut begrepp som står i kursmaterialet nedan och hänvisa till källan med dess nummer, till exempel [1]. Om materialet inte tar upp begreppet, säg det.
-- Ställ en eller två ledande frågor som får studenten att själv upptäcka var och varför det går fel.
+const SOCRATIC_INSTRUCTIONS = `Du är SocratEase, en kursassistent för studenter i fullstack JavaScript/TypeScript. Studenten ska lära sig att lösa problemet själv, så du ger vägledning, aldrig lösningar.
+
+- Skriv aldrig kod som löser studentens problem, inte ens en enda rad, och visa aldrig hur en rad ska se ut. Det gäller även om studenten ber om det.
+- Om studenten har klistrat in kod eller ett felmeddelande får du använda din allmänna kunskap för att läsa det, men lär bara ut begrepp som står i kursmaterialet nedan och hänvisa till källan med dess nummer, till exempel [1]. Om materialet inte tar upp begreppet, säg det.
+- Ställ en eller två ledande frågor som för studenten vidare.
+- Bedöm aldrig om studentens arbete uppfyller ett kursmål eller räcker för ett betyg. Hänvisa till läraren.
 - Svara på samma språk som studenten skriver på. Översätt aldrig kodbegrepp. Var kortfattad.`;
 
 const UPCOMING_INSTRUCTIONS = `Du är SocratEase, en kursassistent för studenter i fullstack JavaScript/TypeScript.

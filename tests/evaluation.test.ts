@@ -74,6 +74,22 @@ describe("runEvaluation", () => {
     expect(report.results.map((r) => r.failures)).toEqual([[], ['is "direct", not "upcoming"']]);
   });
 
+  it("asks a case's question as the next turn of its Conversation", async () => {
+    const report = await runEvaluation({ db, models }, { cohortId, today: TEST_COURSE_TODAY }, [
+      {
+        group: 1,
+        conversation: [
+          { role: "user", content: "Vad är skillnaden mellan let och const?" },
+          { role: "assistant", content: "const kan inte tilldelas om [1]." },
+        ],
+        question: "Kan du förklara mer?",
+        cites: "Variabler: let och const",
+      },
+    ]);
+
+    expect(report.results[0].failures).toEqual([]);
+  });
+
   it("fails a case whose answer leaves out text it must contain", async () => {
     const report = await runEvaluation({ db, models }, { cohortId, today: TEST_COURSE_TODAY }, [
       { group: 2, question: "Vad är skillnaden mellan let och const?", mustContain: ["closure"] },

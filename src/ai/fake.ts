@@ -81,7 +81,7 @@ function hashEmbedding(text: string): number[] {
 }
 
 const STOP_WORDS = new Set(
-  "vad hur varför när vilken vilka finns fungerar gör göra gäller efter från inte till eller också mellan skillnaden betyder kan jag det den som med och för har".split(" "),
+  "vad hur varför när vilken vilka finns fungerar gör göra gäller efter från inte till eller också mellan skillnaden betyder kan jag det den som med och för har javascript".split(" "),
 );
 
 function words(text: string): Set<string> {
@@ -91,15 +91,19 @@ function words(text: string): Set<string> {
 }
 
 /** The fake coverage decision: material that shares a meaningful word with the question. */
-function fakeCoverage(prompt: string): { sources: number[]; uncoveredPart: null } {
+function fakeCoverage(prompt: string): { sources: number[]; uncoveredPart: null; assignment: number | null } {
   // A follow-up is understood from the question before it. A question may span several lines, e.g. pasted code.
   const question = words(
     [...prompt.matchAll(/^(?:Tidigare fråga|Fråga): ([\s\S]*?)(?=\nFråga: |\n\nMaterial:)/gm)].map((m) => m[1]).join(" "),
   );
   const blocks = prompt.split(/^\[(\d+)\] /m).slice(1);
   const sources: number[] = [];
+  let assignment: number | null = null;
   for (let i = 0; i < blocks.length; i += 2) {
-    if ([...words(blocks[i + 1])].some((w) => question.has(w))) sources.push(Number(blocks[i]));
+    if (![...words(blocks[i + 1])].some((w) => question.has(w))) continue;
+    sources.push(Number(blocks[i]));
+    // An Assignment among the chosen material is the one the question resembles.
+    if (assignment === null && blocks[i + 1].split("\n")[0].includes("(inlämningsuppgift")) assignment = Number(blocks[i]);
   }
-  return { sources, uncoveredPart: null };
+  return { sources, uncoveredPart: null, assignment };
 }
